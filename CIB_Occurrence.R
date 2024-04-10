@@ -188,7 +188,7 @@ TronkoExport$Source <- "eDNA"
 TronkoExport$Present <- 1
 TronkoExport <- TronkoExport[,c("Taxon","taxonRank","scientificName","Latitude","Longitude","Source","Present")]
 
-#GBIF.org (28 March 2024) GBIF Occurrence Download https://doi.org/10.15468/dl.xpgfv9
+#GBIF.org (08 April 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.x5kfsx
 #All observations with less than 1km uncertainty in California taken using
 #Human observation, Machine observation, Observation, or Preserved specimen
 GBIF_ranks <- c("kingdom","phylum","class","order","family","genus","species")
