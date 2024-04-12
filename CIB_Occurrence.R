@@ -229,8 +229,13 @@ Background$Source <- "ArcGIS Pro"
 Background$Present <- 0
 Background <- Background[,c("Taxon","taxonRank","scientificName","Latitude","Longitude","Source","Present")]
 
-#Combine presence and background points
-Occurrences_Export <- rbind(TronkoExport,CA_GBIF_Occurrences,Background)
+#Get the number of presence points
+n_occurrences <- nrow(CA_GBIF_Occurrences)+nrow(TronkoExport)
+
+#Combine presence and randomly selected background points
+Occurrences_Export <- rbind(TronkoExport,CA_GBIF_Occurrences,Background[sample(nrow(Background), n_occurrences), ])
 
 #Export presence/background table.
+write.table(TronkoExport,paste(gsub(" ","_",Taxon_selected),"_eDNA.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
+write.table(CA_GBIF_Occurrences,paste(gsub(" ","_",Taxon_selected),"_GBIF.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
 write.table(Occurrences_Export,paste(gsub(" ","_",Taxon_selected),"_PresenceBackground.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
