@@ -194,12 +194,20 @@ CA_GBIF_Input <- CA_GBIF_Input %>%
     kingdom == "Archaea" ~ "Archaea",
     TRUE ~ NA_character_
   ))
-#Set columns to match eDNA prevalence table
+#Filter GBIF occurrences
 CA_GBIF_Input <- as.data.frame(CA_GBIF_Input)
+if(Primer=="ITS1_Fungi"){
+  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$kingdom=="Fungi",]
+}
+if(Primer=="CO1_Metazoa"){
+  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
+}
+#Set columns to match eDNA prevalence table
 CA_GBIF_Input <- CA_GBIF_Input[,TaxonomicRanks]
 #Aggregate GBIF occurrences by unique taxon.
 CA_GBIF_Input <- CA_GBIF_Input %>% dplyr::count(superkingdom,phylum,class,order,family,genus,species)
 names(CA_GBIF_Input)[names(CA_GBIF_Input) == "n"] <- "GBIF_prevalence"
+
 
 #Export a combined prevalence table
 Prevalence_Export <- dplyr::left_join(CA_GBIF_Input,TronkoExport)
