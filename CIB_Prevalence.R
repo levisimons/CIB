@@ -19,7 +19,7 @@ Project_Directories <- Project_Directories[Project_Directories != paste(wd,"ca-s
 
 #Select a primer
 Primers <- c("12S_MiFish_U","16S_Bacteria","18S_Euk","CO1_Metazoa","ITS1_Fungi","ITS2_Plants","vert12S")
-Primer <- "ITS1_Fungi"
+Primer <- "CO1_Metazoa"
 
 #Aggregate tronko-assign results to a particular taxonomic level.
 TaxonomicRanks <- c("superkingdom","phylum","class","order","family","genus","species")
@@ -209,3 +209,4 @@ Prevalence_Export <- Prevalence_Export %>%
   filter(!is.na(superkingdom) | !is.na(phylum) | !is.na(class) | !is.na(order) | !is.na(family) | !is.na(genus) | !is.na(species))
 
 write.table(Prevalence_Export,paste(Primer,"_CA_Taxa_Prevalence.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
+write.table(Prevalence_Export[Prevalence_Export$Total_prevalence>=30,],paste(Primer,"_CA_Taxa_Prevalence_Filtered.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
