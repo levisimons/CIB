@@ -24,7 +24,7 @@ Primer <- "ITS1_Fungi"
 #Aggregate tronko-assign results to a particular taxonomic level.
 TaxonomicRanks <- c("superkingdom","phylum","class","order","family","genus","species")
 TaxonomicRank <- "species"
-Taxon_selected <- "Tremella mesenterica"
+Taxon_selected <- "Armillaria nabsnona"
 
 #Select a tronko-assign mismatch cutoff.
 Mismatch <- 25
@@ -156,7 +156,7 @@ MetadataTables$Substrate <- ifelse(MetadataTables$Substrate %in% c("sand", "orga
 MetadataTables$Substrate <- ifelse(MetadataTables$Substrate %in% c("silt"), "sediment", MetadataTables$Substrate)
 MetadataTables$Substrate <- ifelse(MetadataTables$Substrate %in% c("", "NA"), NA, MetadataTables$Substrate)
 
-#Aggreate environmental metadata
+#Aggregate environmental metadata
 Environmental_Metadata <- rbind.fill(Environmental_Metadata)
 #Set date and NA values
 Environmental_Metadata$Sample_Date <- as.Date(Environmental_Metadata$Sample_Date)
@@ -236,6 +236,6 @@ n_occurrences <- nrow(CA_GBIF_Occurrences)+nrow(TronkoExport)
 Occurrences_Export <- rbind(TronkoExport,CA_GBIF_Occurrences,Background[sample(nrow(Background), n_occurrences), ])
 
 #Export presence/background table.
-write.table(TronkoExport,paste(gsub(" ","_",Taxon_selected),"_eDNA.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
-write.table(CA_GBIF_Occurrences,paste(gsub(" ","_",Taxon_selected),"_GBIF.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
-write.table(Occurrences_Export,paste(gsub(" ","_",Taxon_selected),"_PresenceBackground.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
+write.table(TronkoExport[complete.cases(TronkoExport),],paste(gsub(" ","_",Taxon_selected),"_eDNA.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
+write.table(CA_GBIF_Occurrences[complete.cases(CA_GBIF_Occurrences),],paste(gsub(" ","_",Taxon_selected),"_GBIF.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
+write.table(Occurrences_Export[complete.cases(Occurrences_Export),],paste(gsub(" ","_",Taxon_selected),"_PresenceBackground.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
