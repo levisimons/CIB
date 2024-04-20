@@ -174,6 +174,16 @@ TronkoTables$eDNA_Prevalence <- rowSums(TronkoTables[,!(colnames(TronkoTables) %
 #Generate sample prevalence table for tronko-assign results
 TronkoExport <- TronkoTables[,c("Taxon","eDNA_Prevalence")]
 TronkoExport <- separate(data = TronkoExport, col = "Taxon", sep=";",into = TaxonomicRanks)
+#Clean NA values.
+TronkoExport <- TronkoExport %>% mutate_all(~ifelse(. == "NA", NA, .))
+#Filter taxa to match GBIF filtering.
+if(Primer=="CO1_Metazoa"){
+  TronkoExport <- TronkoExport[TronkoExport$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
+}
+#Aggregate prevalence by duplicate taxa.
+TronkoExport <- TronkoExport %>% mutate_all(~replace_na(., "NA"))
+TronkoExport <- aggregate(. ~superkingdom+phylum+class+order+family+genus+species, data=TronkoExport, sum, na.rm=TRUE)
+TronkoExport <- TronkoExport %>% mutate_all(~ifelse(. == "NA", NA, .))
 
 #GBIF.org (08 April 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.x5kfsx
 #All observations with less than 1km uncertainty in California taken using
@@ -183,7 +193,7 @@ CA_GBIF_Input <- fread(input="CA_GBIF.csv",select=c(GBIF_ranks,"taxonRank","scie
 #Clean and standardize taxonomic data.
 CA_GBIF_Input$taxonRank <- tolower(CA_GBIF_Input$taxonRank)
 CA_GBIF_Input[CA_GBIF_Input==""] <- NA
-CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$taxonRank %in% GBIF_ranks,]
+#CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$taxonRank %in% GBIF_ranks,]
 #Filter out to only include observations within coordinates.
 CA_GBIF_Input <- CA_GBIF_Input[!is.na(CA_GBIF_Input$decimalLatitude),]
 #Assign superkingdoms
@@ -210,7 +220,7 @@ names(CA_GBIF_Input)[names(CA_GBIF_Input) == "n"] <- "GBIF_prevalence"
 
 
 #Export a combined prevalence table
-Prevalence_Export <- dplyr::left_join(CA_GBIF_Input,TronkoExport)
+Prevalence_Export <- dplyr::full_join(CA_GBIF_Input,TronkoExport)
 Prevalence_Export <- Prevalence_Export %>%
   mutate(Total_prevalence = ifelse(is.na(GBIF_prevalence), 0, GBIF_prevalence) + ifelse(is.na(eDNA_Prevalence), 0, eDNA_Prevalence))
 Prevalence_Export <- Prevalence_Export %>%
