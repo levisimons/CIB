@@ -4,22 +4,98 @@ require(plyr)
 require(tidyr)
 require(phyloseq)
 require(decontam)
-require(dismo)
-require(randomForest)
-require(caret)
+require(data.table)
 
 wd <- "/Users/levisimons/Desktop/CIB"
 
 setwd(wd)
 
+#Select a primer
+Primers <- c("12S_MiFish_U","16S_Bacteria","18S_Euk","CO1_Metazoa","ITS1_Fungi","ITS2_Plants","vert12S")
+Primer <- "ITS1_Fungi"
+
+#Read in GBIF data sets.
+#GBIF.org (03 May 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.j6wbeq
+#All taxa in California
+CA_GBIF_All <- read.table("CA_GBIF_Taxa_Full.csv", header=TRUE, sep="\t",as.is=T,skip=0,fill=TRUE,check.names=FALSE,quote = "\"", encoding = "UTF-8")
+
+#GBIF.org (03 May 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.2jwkqg
+#All taxa in California.  Observation categories: Preserved Specimen, Fossil Specimen, Living Specimen.
+CA_GBIF_Collections <- read.table("CA_GBIF_Taxa_Collections.csv", header=TRUE, sep="\t",as.is=T,skip=0,fill=TRUE,check.names=FALSE,quote = "\"", encoding = "UTF-8")
+
+#GBIF.org (03 May 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.djd56f
+#All taxa in California. Spatial uncertainty under 1 km.
+CA_GBIF_1km <- read.table("CA_GBIF_Taxa_1km.csv", header=TRUE, sep="\t",as.is=T,skip=0,fill=TRUE,check.names=FALSE,quote = "\"", encoding = "UTF-8")
+
+#Read in iNaturalist taxon ID to GBIF ID backbone.
+iNaturalist_backbone <- fread(input="iNaturalist_taxa.csv",sep=",",select=c("id","kingdom","phylum","class","order","family","genus","scientificName","taxonRank"))
+
+#Filter GBIF occurrences, and read in the appropriate genera-level iNaturalist observations.
+if(Primer=="ITS1_Fungi"){
+  CA_GBIF_All <- CA_GBIF_All[CA_GBIF_All$kingdom=="Fungi",]
+  CA_GBIF_Collections <- CA_GBIF_Collections[CA_GBIF_Collections$kingdom=="Fungi",]
+  CA_GBIF_1km <- CA_GBIF_1km[CA_GBIF_1km$kingdom=="Fungi",]
+  iNaturalist_Locations <- fread("iNaturalist_Fungi.csv",sep=",",select=c("taxon_id","scientific_name","latitude","longitude","positional_accuracy"))
+  iNaturalist_Locations <- dplyr::left_join(iNaturalist_Locations,iNaturalist_backbone,by=c("taxon_id"="id"))
+  #Get unique iNaturalist taxa
+  iNaturalist_taxa <- iNaturalist_Locations[,c("taxon_id","kingdom","phylum","class","order","family","genus","scientificName","taxonRank")]
+  iNaturalist_taxa <- iNaturalist_taxa[!duplicated(iNaturalist_taxa),]
+  #Get unique iNaturalist occurrences with a 1 km spatial uncertainty filter.
+  iNaturalist_occurrences <- iNaturalist_Locations[iNaturalist_Locations$positional_accuracy < 1000 & !is.na(iNaturalist_Locations$positional_accuracy),]
+  #Assign superkingdoms
+  iNaturalist_occurrences <- iNaturalist_occurrences %>%
+    mutate(superkingdom = case_when(
+      kingdom %in% c("Animalia", "Plantae", "Fungi", "Protista") ~ "Eukaryota",
+      kingdom == "Bacteria" ~ "Bacteria",
+      kingdom == "Archaea" ~ "Archaea",
+      TRUE ~ NA_character_
+    ))
+  iNaturalist_occurrences <- iNaturalist_occurrences %>% dplyr::count(superkingdom,phylum,class,order,family,genus)
+  names(iNaturalist_occurrences)[names(iNaturalist_occurrences) == "n"] <- "iNaturalist_prevalence"
+}
+if(Primer=="CO1_Metazoa"){
+  CA_GBIF_All <- CA_GBIF_All[CA_GBIF_All$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
+  CA_GBIF_Collections <- CA_GBIF_Collections[CA_GBIF_Collections$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
+}
+
+#GBIF.org (23 April 2024) GBIF Occurrence Download https://doi.org/10.15468/dl.3skmb8
+#All observations with less than 1km uncertainty in California taken using
+#All observation categories.
+GBIF_ranks <- c("kingdom","phylum","class","order","family","genus","species")
+CA_GBIF_Input <- fread(input="CA_GBIF_1km.csv",select=c(GBIF_ranks,"taxonRank","scientificName","decimalLatitude","decimalLongitude"),quote="")
+#Clean and standardize taxonomic data.
+CA_GBIF_Input$taxonRank <- tolower(CA_GBIF_Input$taxonRank)
+CA_GBIF_Input[CA_GBIF_Input==""] <- NA
+#CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$taxonRank %in% GBIF_ranks,]
+#Filter out to only include observations with coordinates.
+CA_GBIF_Input <- CA_GBIF_Input[!is.na(CA_GBIF_Input$decimalLatitude),]
+#Assign superkingdoms
+CA_GBIF_Input <- CA_GBIF_Input %>%
+  mutate(superkingdom = case_when(
+    kingdom %in% c("Animalia", "Plantae", "Fungi", "Protista") ~ "Eukaryota",
+    kingdom == "Bacteria" ~ "Bacteria",
+    kingdom == "Archaea" ~ "Archaea",
+    TRUE ~ NA_character_
+  ))
+#Filter GBIF occurrences
+CA_GBIF_Input <- as.data.frame(CA_GBIF_Input)
+if(Primer=="ITS1_Fungi"){
+  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$kingdom=="Fungi",]
+}
+if(Primer=="CO1_Metazoa"){
+  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
+}
+#Set columns to match eDNA prevalence table
+CA_GBIF_Input <- CA_GBIF_Input[,TaxonomicRanks]
+#Aggregate GBIF occurrences by unique taxon.
+CA_GBIF_Input <- CA_GBIF_Input %>% dplyr::count(superkingdom,phylum,class,order,family,genus,species)
+names(CA_GBIF_Input)[names(CA_GBIF_Input) == "n"] <- "GBIF_prevalence"
+
+##Read in and process Tronko-assign eDNA data.
 #Get project directories
 Project_Directories <- list.dirs(path=wd,recursive=F)
 Project_Directories <- Project_Directories[Project_Directories != paste(wd,"sratoolkit.3.0.10-mac-x86_64",sep="/")]
 Project_Directories <- Project_Directories[Project_Directories != paste(wd,"ca-state-boundary",sep="/")]
-
-#Select a primer
-Primers <- c("12S_MiFish_U","16S_Bacteria","18S_Euk","CO1_Metazoa","ITS1_Fungi","ITS2_Plants","vert12S")
-Primer <- "CO1_Metazoa"
 
 #Aggregate tronko-assign results to a particular taxonomic level.
 TaxonomicRanks <- c("superkingdom","phylum","class","order","family","genus","species")
@@ -169,10 +245,10 @@ TronkoTables <- aggregate(. ~ Taxon, data = TronkoTables, FUN = sum)
 #Convert read counts to presence/absence.
 TronkoTables[,!(colnames(TronkoTables) %in% "Taxon")] <- TronkoTables[,!(colnames(TronkoTables) %in% "Taxon")] %>% mutate_all(~ ifelse(. > 0, 1, 0))
 #Get sample prevalence
-TronkoTables$eDNA_Prevalence <- rowSums(TronkoTables[,!(colnames(TronkoTables) %in% "Taxon")])
+TronkoTables$eDNA_prevalence <- rowSums(TronkoTables[,!(colnames(TronkoTables) %in% "Taxon")])
 
 #Generate sample prevalence table for tronko-assign results
-TronkoExport <- TronkoTables[,c("Taxon","eDNA_Prevalence")]
+TronkoExport <- TronkoTables[,c("Taxon","eDNA_prevalence")]
 TronkoExport <- separate(data = TronkoExport, col = "Taxon", sep=";",into = TaxonomicRanks)
 #Clean NA values.
 TronkoExport <- TronkoExport %>% mutate_all(~ifelse(. == "NA", NA, .))
@@ -185,46 +261,63 @@ TronkoExport <- TronkoExport %>% mutate_all(~replace_na(., "NA"))
 TronkoExport <- aggregate(. ~superkingdom+phylum+class+order+family+genus+species, data=TronkoExport, sum, na.rm=TRUE)
 TronkoExport <- TronkoExport %>% mutate_all(~ifelse(. == "NA", NA, .))
 
-#GBIF.org (08 April 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.x5kfsx
-#All observations with less than 1km uncertainty in California taken using
-#Human observation, Machine observation, Observation, or Preserved specimen
-GBIF_ranks <- c("kingdom","phylum","class","order","family","genus","species")
-CA_GBIF_Input <- fread(input="CA_GBIF.csv",select=c(GBIF_ranks,"taxonRank","scientificName","decimalLatitude","decimalLongitude"),quote="")
-#Clean and standardize taxonomic data.
-CA_GBIF_Input$taxonRank <- tolower(CA_GBIF_Input$taxonRank)
-CA_GBIF_Input[CA_GBIF_Input==""] <- NA
-#CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$taxonRank %in% GBIF_ranks,]
-#Filter out to only include observations within coordinates.
-CA_GBIF_Input <- CA_GBIF_Input[!is.na(CA_GBIF_Input$decimalLatitude),]
+#Add in column showing if eDNA taxa show up in California GBIF data (No spatial filter).
+tmp <- CA_GBIF_All[,c("kingdom","phylum","class","order","family","genus","species")]
 #Assign superkingdoms
-CA_GBIF_Input <- CA_GBIF_Input %>%
+tmp <- tmp %>%
   mutate(superkingdom = case_when(
     kingdom %in% c("Animalia", "Plantae", "Fungi", "Protista") ~ "Eukaryota",
     kingdom == "Bacteria" ~ "Bacteria",
     kingdom == "Archaea" ~ "Archaea",
     TRUE ~ NA_character_
   ))
-#Filter GBIF occurrences
-CA_GBIF_Input <- as.data.frame(CA_GBIF_Input)
-if(Primer=="ITS1_Fungi"){
-  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$kingdom=="Fungi",]
-}
-if(Primer=="CO1_Metazoa"){
-  CA_GBIF_Input <- CA_GBIF_Input[CA_GBIF_Input$phylum %in% c("Platyhelminthes","Turbellaria","Trematoda","Cestoda","Nemertea","Nemertea","Rotifera","Gastrotricha","Acanthocephala","Nematoda","Nematomorpha","Priapulida","Kinorhyncha","Loricifera","Entoprocta","Cycliophora","Gnathostomulida","Micrognathozoa","Chaetognatha","Hemichordata","Bryozoa","Brachiopoda","Phoronida","Ectoprocta","Annelida","Polychaeta","Clitellata","Mollusca","Gastropoda","Bivalvia","Arthropoda","Insecta","Arachnida","Crustacea","Myriapoda"),]
-}
-#Set columns to match eDNA prevalence table
-CA_GBIF_Input <- CA_GBIF_Input[,TaxonomicRanks]
-#Aggregate GBIF occurrences by unique taxon.
-CA_GBIF_Input <- CA_GBIF_Input %>% dplyr::count(superkingdom,phylum,class,order,family,genus,species)
-names(CA_GBIF_Input)[names(CA_GBIF_Input) == "n"] <- "GBIF_prevalence"
+tmp$kingdom <- NULL
+tmp$GBIF_in_CA <- 1
+tmp <- tmp[!duplicated(tmp),]
+Prevalence_Export <- dplyr::left_join(TronkoExport,tmp)
+Prevalence_Export$GBIF_in_CA <- ifelse(is.na(Prevalence_Export$GBIF_in_CA),0,1)
 
+#Add in column showing if eDNA taxa show up in California GBIF collections.
+tmp <- CA_GBIF_Collections[,c("kingdom","phylum","class","order","family","genus","species")]
+#Assign superkingdoms
+tmp <- tmp %>%
+  mutate(superkingdom = case_when(
+    kingdom %in% c("Animalia", "Plantae", "Fungi", "Protista") ~ "Eukaryota",
+    kingdom == "Bacteria" ~ "Bacteria",
+    kingdom == "Archaea" ~ "Archaea",
+    TRUE ~ NA_character_
+  ))
+tmp$kingdom <- NULL
+tmp$GBIF_in_CA_Collections <- 1
+tmp <- tmp[!duplicated(tmp),]
+Prevalence_Export <- dplyr::left_join(Prevalence_Export,tmp)
+Prevalence_Export$GBIF_in_CA_Collections <- ifelse(is.na(Prevalence_Export$GBIF_in_CA_Collections),0,1)
 
-#Export a combined prevalence table
-Prevalence_Export <- dplyr::full_join(CA_GBIF_Input,TronkoExport)
-Prevalence_Export <- Prevalence_Export %>%
-  mutate(Total_prevalence = ifelse(is.na(GBIF_prevalence), 0, GBIF_prevalence) + ifelse(is.na(eDNA_Prevalence), 0, eDNA_Prevalence))
-Prevalence_Export <- Prevalence_Export %>%
-  filter(!is.na(superkingdom) | !is.na(phylum) | !is.na(class) | !is.na(order) | !is.na(family) | !is.na(genus) | !is.na(species))
+#Add in column showing if eDNA taxa show up in California iNaturalist data.
+tmp <- iNaturalist_taxa[,c("kingdom","phylum","class","order","family","genus"),]
+#Assign superkingdoms
+tmp <- tmp %>%
+  mutate(superkingdom = case_when(
+    kingdom %in% c("Animalia", "Plantae", "Fungi", "Protista") ~ "Eukaryota",
+    kingdom == "Bacteria" ~ "Bacteria",
+    kingdom == "Archaea" ~ "Archaea",
+    TRUE ~ NA_character_
+  ))
+tmp$kingdom <- NULL
+tmp$iNaturalist_in_CA <- 1
+tmp <- tmp[!duplicated(tmp),]
+Prevalence_Export <- dplyr::left_join(Prevalence_Export,tmp)
+Prevalence_Export$iNaturalist_in_CA <- ifelse(is.na(Prevalence_Export$iNaturalist_in_CA),0,1)
 
+#Combine eDNA, iNaturalist, GBIF prevalence tables.
+#Note that GBIF and iNaturalist prevalence tables are filtered to under 1 km spatial uncertainty.
+Prevalence_Export <- dplyr::full_join(Prevalence_Export,CA_GBIF_Input)
+Prevalence_Export <- Prevalence_Export[!duplicated(Prevalence_Export),]
+Prevalence_Export <- dplyr::full_join(Prevalence_Export,iNaturalist_occurrences,by=c("superkingdom","phylum","class","order","family","genus"))
+Prevalence_Export <- Prevalence_Export[!duplicated(Prevalence_Export),]
+Prevalence_Export$Total_prevalence <- rowSums(Prevalence_Export[,c("GBIF_prevalence","eDNA_prevalence","iNaturalist_prevalence")], na.rm = TRUE)
+Prevalence_Export <- Prevalence_Export %>% mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+#Export prevalence tables
 write.table(Prevalence_Export,paste(Primer,"_CA_Taxa_Prevalence.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
 write.table(Prevalence_Export[Prevalence_Export$Total_prevalence>=30,],paste(Primer,"_CA_Taxa_Prevalence_Filtered.csv",sep=""),quote=FALSE,sep=",",row.names = FALSE)
