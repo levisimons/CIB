@@ -1,3 +1,6 @@
+#This script generates a unified backbone between GBIF and NCBI taxonomies.
+#The final output matches the most taxonomically resolved GBIF entry to a NCBI taxonomic entry.
+#Note: This script requires approximately 128GB of RAM to run.
 rm(list=ls())
 require(dplyr)
 require(plyr)
@@ -7,8 +10,7 @@ require(stringr)
 require(pbmcapply)
 require(taxonbridge)#Make sure taxonkit is installed: conda install -c bioconda taxonkit
 
-wd <- "/Users/levisimons/Desktop/Archive/backbone"
-wd <- "/home/exouser/backbone"
+wd <- ""
 
 setwd(wd)
 
