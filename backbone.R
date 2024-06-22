@@ -1,6 +1,7 @@
 #This script generates a unified backbone between GBIF and NCBI taxonomies.
 #The final output matches the most taxonomically resolved GBIF entry to a NCBI taxonomic entry.
 #Note: This script requires approximately 128GB of RAM to run.
+
 rm(list=ls())
 require(dplyr)
 require(plyr)
@@ -10,7 +11,8 @@ require(stringr)
 require(pbmcapply)
 require(taxonbridge)#Make sure taxonkit is installed: conda install -c bioconda taxonkit
 
-wd <- ""
+wd <- "/Users/levisimons/Desktop/Archive/backbone"
+wd <- "/home/exouser/backbone"
 
 setwd(wd)
 
@@ -121,7 +123,7 @@ write.table(OTL_GBIF_updated,"OTL_GBIF_updated.tsv",quote=FALSE,sep="\t",row.nam
 OTL_GBIF_updated <- fread(input="OTL_GBIF_updated.tsv",sep="\t")
 
 #NCBI node and name descriptions: https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdump_readme.txt
-#Download https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip
+#Download https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip (2024-06-21 version)
 #Read in ncbi nodes
 ncbi_nodes <- fread("nodes.dmp",sep="\t")
 ncbi_nodes <- ncbi_nodes[,c("V1","V3","V5")]
@@ -218,7 +220,9 @@ GBIF_NCBI <- dplyr::left_join(OTL_GBIF_updated[,c("ncbi_name","ncbi_rank","ncbi_
 
 #Mege in NCBI backbone.
 GBIF_NCBI <- dplyr::left_join(GBIF_NCBI,ncbi_taxa_full,by=c("ncbi_id"="ncbi_id"))
+#Remove extraneoud columns
+drop_cols <- c("canonicalName","taxonRank","specificEpithet","genericName")
+GBIF_NCBI <- GBIF_NCBI %>% dplyr::select(-one_of(drop_cols))
 GBIF_NCBI <- GBIF_NCBI[!duplicated(GBIF_NCBI),]
 #Export
 write.table(GBIF_NCBI,"GBIF_NCBI_export.tsv",quote=FALSE,sep="\t",row.names = FALSE)
-GBIF_NCBI <- fread(input="GBIF_NCBI_export.tsv",sep="\t")
