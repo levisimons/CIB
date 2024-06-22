@@ -113,12 +113,12 @@ for(Project_Directory in Project_Directories){
       project_stat$Number_taxa_decontaminated <- ntaxa(contamdf.prev_min_threshold_p)
       project_stats[[i]] <- project_stat
       #Export data on projects before and after decontamination.
-      #saveRDS(physeq_initial, paste(ProjectID,"_",Primer,"_initial_phyloseq.rds",sep=""))
-      #saveRDS(contamdf.prev_min_threshold_p, paste(ProjectID,"_",Primer,"_decontaminated_phyloseq.rds",sep=""))
-      #write.table(data.frame("sum.taxonomy"=rownames(otu_table(physeq_initial)),otu_table(physeq_initial)),paste(ProjectID,"_",Primer,"_initial_tax_table.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
-      #write.table(data.frame("sum.taxonomy"=rownames(otu_table(contamdf.prev_min_threshold_p)),otu_table(contamdf.prev_min_threshold_p)),paste(ProjectID,"_",Primer,"_decontaminated_tax_table.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
-      #write.table(as.data.frame(sample_data(physeq_initial)),paste(ProjectID,"_",Primer,"_initial_metadata.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
-      #write.table(as.data.frame(sample_data(contamdf.prev_min_threshold_p)),paste(ProjectID,"_",Primer,"_decontaminated_metadata.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
+      saveRDS(physeq_initial, paste(ProjectID,"_",Primer,"_initial_phyloseq.rds",sep=""))
+      saveRDS(contamdf.prev_min_threshold_p, paste(ProjectID,"_",Primer,"_decontaminated_phyloseq.rds",sep=""))
+      write.table(data.frame("sum.taxonomy"=rownames(otu_table(physeq_initial)),otu_table(physeq_initial)),paste(ProjectID,"_",Primer,"_initial_tax_table.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
+      write.table(data.frame("sum.taxonomy"=rownames(otu_table(contamdf.prev_min_threshold_p)),otu_table(contamdf.prev_min_threshold_p)),paste(ProjectID,"_",Primer,"_decontaminated_tax_table.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
+      write.table(as.data.frame(sample_data(physeq_initial)),paste(ProjectID,"_",Primer,"_initial_metadata.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
+      write.table(as.data.frame(sample_data(contamdf.prev_min_threshold_p)),paste(ProjectID,"_",Primer,"_decontaminated_metadata.txt",sep=""), row.names=FALSE, sep="\t",quote = FALSE)
       #Store phyloseq objects
       if(!exists("physeq_total")){
         physeq_total <- contamdf.prev_min_threshold_p
