@@ -303,20 +303,6 @@ TaxonomyExport_GBIF <- TaxonomyExport_GBIF %>%
   dplyr::ungroup() %>%
   select(-count)
 
-
-#Determine which eDNA occurrences are found in GBIF in California
-#Read in GBIF data sets.
-#GBIF.org (03 May 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.j6wbeq
-#All taxa in California
-#CA_GBIF_All <- fread(input="CA_GBIF_Taxa_Full.csv",sep="\t")
-#CA_GBIF_All <- fread(input="CA_GBIF_Occurrences.csv",sep="\t",na.strings=c("NA",""),quote="",select=c("species","genus","family","order","class","phylum","kingdom"))
-#tmp <- CA_GBIF_All[!duplicated(CA_GBIF_All),]
-#tmp$GBIF_in_CA <- 1
-#test <- dplyr::left_join(TaxonomyExport_GBIF,tmp)
-#Check if taxa, according to their GBIF taxonomy, were found in GBIF records for California
-#GBIF_all_taxa <- na.omit(unique(unlist(CA_GBIF_All[,c("acceptedTaxonKey","phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey")])))
-#TaxonomyExport_GBIF$GBIF_in_CA <- ifelse(TaxonomyExport_GBIF$taxonID %in% GBIF_all_taxa,1,0)
-
 #Determine which eDNA occurrences are found in GBIF in California
 #Read in GBIF data sets.
 #GBIF.org (25 June 2024) GBIF Occurrence Download https://doi.org/10.15468/dl.u8mz2u
@@ -329,15 +315,6 @@ CA_GBIF_All$GBIF_in_CA <- 1
 #Check if eDNA data shows up in GBIF California data.
 TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,CA_GBIF_All)
 TaxonomyExport_GBIF$GBIF_in_CA <- ifelse(is.na(TaxonomyExport_GBIF$GBIF_in_CA),0,1)
-
-#Determine which eDNA occurrences are found in GBIF in California collections
-#GBIF.org (03 May 2024) GBIF Occurrence Download  https://doi.org/10.15468/dl.2jwkqg
-#All taxa in California.  Observation categories: Preserved Specimen, Fossil Specimen, Living Specimen.
-CA_GBIF_Collections <- fread(input="CA_GBIF_Taxa_Collections.csv",sep="\t",na.strings=c("NA",""))
-CA_GBIF_Collections$GBIF_in_CA_Collections <- 1
-#Check if taxa, according to their GBIF taxonomy, were found in GBIF collection records for California
-TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,CA_GBIF_Collections)
-TaxonomyExport_GBIF$GBIF_in_CA_Collections <- ifelse(is.na(TaxonomyExport_GBIF$GBIF_in_CA_Collections),0,1)
 
 #Determine which eDNA occurrences are found in GBIF in California collections
 #GBIF.org (25 June 2024) GBIF Occurrence Download https://doi.org/10.15468/dl.e3kttn
