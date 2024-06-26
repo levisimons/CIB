@@ -18,7 +18,7 @@ Fungal_Phyla <- c("Ascomycota", "Basidiomycota", "Entorrhizomycetes", "Blastocla
 
 #Select a primer
 Primers <- c("12S_MiFish_U","16S_Bacteria","18S_Euk","CO1_Metazoa","ITS1_Fungi","ITS2_Plants","vert12S")
-Primer <- "CO1_Metazoa"
+Primer <- "ITS1_Fungi"
 
 ##Read in and process Tronko-assign eDNA data.
 #Get project directories
@@ -155,8 +155,6 @@ if(Primer=="ITS1_Fungi"){
 OTUTable_Tronko <- as.data.frame(otu_table(physeq_retain))
 #Convert read counts to presence/absence.
 OTUTable_Tronko <- OTUTable_Tronko %>% mutate_all(~ ifelse(. > 0, 1, 0))
-#Calculate eDNA taxa prevalence
-OTUTable_Tronko$eDNA_prevalence <- rowSums(OTUTable_Tronko)
 #Get taxa by ranks
 TaxonomyExport_Tronko <- OTUTable_Tronko
 TaxonomyExport_Tronko$Taxon <- rownames(TaxonomyExport_Tronko)
@@ -183,6 +181,7 @@ first_non_na_index <- function(row) {
 ncbi_taxa_full$ncbi_rank <- NCBI_ranks[apply(tmp[,..NCBI_ranks], 1, first_non_na_index)]
 ncbi_taxa_full$ncbi_rank <- gsub("ncbi_","",ncbi_taxa_full$ncbi_rank)
 ncbi_taxa_full <- ncbi_taxa_full[!duplicated(ncbi_taxa_full),]
+
 #Check for where Tronko outputs don't fully align with NCBI taxonomies.
 TaxonomyExport_NCBI <- TaxonomyExport_Tronko
 tmp <- ncbi_taxa_full[,..NCBI_ranks]
@@ -281,8 +280,8 @@ retain_preferential_rows <- function(data, taxonomic_ranks) {
 
 #Add in the corresponding GBIF taxonomies, on a rank-by-rank basis to the NCBI inputs.
 TaxonomyExport_GBIF <- TaxonomyExport_NCBI
+#TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,GBIF_NCBI[,c("ncbi_id","species","genus","family","order","class","phylum","kingdom")],by=c("ncbi_id"),na_matches="na")
 for(TaxonomicRank in c("species","genus","family","order","class","phylum")){
-  #select_cols <- c(paste("ncbi_",TaxonomicRank,sep=""),paste("ncbi_",TaxonomicRank,"_id",sep=""),TaxonomicRank)
   select_cols <- c(paste("ncbi_",TaxonomicRank,sep=""),TaxonomicRank)
   tmp <- GBIF_NCBI[,..select_cols]
   tmp <- tmp[!duplicated(tmp),]
@@ -296,12 +295,27 @@ tmp <- tmp[!duplicated(tmp),]
 TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,tmp)
 
 #Determine taxa prevalence using GBIF taxonomy.
-TaxonomyExport_GBIF <- TaxonomyExport_GBIF %>%
+OTUTable_Tronko <- as.data.frame(otu_table(physeq_retain))
+#Convert read counts to presence/absence.
+OTUTable_Tronko <- OTUTable_Tronko %>% mutate_all(~ ifelse(. > 0, 1, 0))
+#Get taxa by ranks
+TaxonomyExport_Tronko <- OTUTable_Tronko
+TaxonomyExport_Tronko$Taxon <- rownames(TaxonomyExport_Tronko)
+TaxonomyExport_Tronko <- separate(data = TaxonomyExport_Tronko, col = "Taxon", sep=";",into = paste0("tronko_",TaxonomicRanks,sep=""))
+TaxonomyExport_Tronko[TaxonomyExport_Tronko == "NA"] <- NA
+TaxonomyExport_Tronko <- dplyr::left_join(TaxonomyExport_Tronko,TaxonomyExport_GBIF[,c("tronko_species","tronko_genus","tronko_family","tronko_order","tronko_class","tronko_phylum","tronko_superkingdom","species","genus","family","order","class","phylum","kingdom")],na_matches="na")
+TaxonomyExport_Tronko <- TaxonomyExport_Tronko[!(colnames(TaxonomyExport_Tronko) %in% c("tronko_species","tronko_genus","tronko_family","tronko_order","tronko_class","tronko_phylum","tronko_superkingdom"))]
+TaxonomyExport_Tronko <- TaxonomyExport_Tronko %>%
   dplyr::group_by(species, genus, family, order, class, phylum, kingdom) %>%
-  dplyr::mutate(count = dplyr::n(),
-         eDNA_prevalence_GBIF = if_else(count > 1, sum(eDNA_prevalence_Tronko, na.rm = TRUE), eDNA_prevalence_Tronko)) %>%
-  dplyr::ungroup() %>%
-  select(-count)
+  dplyr::summarize(dplyr::across(everything(), ~sum(.x, na.rm = TRUE)), .groups = 'drop')
+
+TaxonomyExport_Tronko <- setDT(TaxonomyExport_Tronko)
+numeric_cols <- sapply(TaxonomyExport_Tronko, is.numeric)
+TaxonomyExport_Tronko[, (names(TaxonomyExport_Tronko)[numeric_cols]) := lapply(.SD, function(x) ifelse(x > 0, 1, x)), .SDcols = numeric_cols]
+
+TaxonomyExport_Tronko <- as.data.frame(TaxonomyExport_Tronko)
+TaxonomyExport_Tronko$eDNA_prevalence_GBIF <- rowSums(TaxonomyExport_Tronko[,!(colnames(TaxonomyExport_Tronko) %in% c("species","genus","family","order","class","phylum","kingdom"))])
+TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,TaxonomyExport_Tronko[,c("species","genus","family","order","class","phylum","kingdom","eDNA_prevalence_GBIF")],by=c("species","genus","family","order","class","phylum","kingdom"))
 
 #Determine which eDNA occurrences are found in GBIF in California
 #Read in GBIF data sets.
@@ -343,74 +357,6 @@ iNaturalist_backbone <- iNaturalist_backbone[!duplicated(iNaturalist_backbone),]
 iNaturalist_backbone$iNaturalist_in_CA <- 1
 TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,iNaturalist_backbone,by=c("genus","family","order","class","phylum","kingdom"))
 TaxonomyExport_GBIF$iNaturalist_in_CA <- ifelse(is.na(TaxonomyExport_GBIF$iNaturalist_in_CA),0,1)
-#Add in check if taxa are detected via eDNA, observed in GBIF and/or iNaturalist, but are not in a GBIF collection.
-TaxonomyExport_GBIF$Future_collection_target <- ifelse(TaxonomyExport_GBIF$GBIF_in_CA_Collections==0 & TaxonomyExport_GBIF$iNaturalist_in_CA==1 & TaxonomyExport_GBIF$GBIF_in_CA==1,1,0)
-#Export table.
-write.table(TaxonomyExport_GBIF,paste(Primer,"_eDNAPrevalence_GBIF.tsv",sep=""),quote=FALSE,sep="\t",row.names = FALSE)
-
-
-
-
-#Split iNaturalist taxa into entries with standard and non-standard taxonomic ranks
-iNaturalist_backbone_standard <- iNaturalist_backbone[iNaturalist_backbone$taxonRank %in% TaxonomicRanks,]
-iNaturalist_backbone_nonstandard <- iNaturalist_backbone[!(iNaturalist_backbone$taxonRank %in% TaxonomicRanks),]
-
-#Filter by matching taxonomic names with GBIF entries at the rank of genus and above.
-OTL_taxonomy_subset <- OTL_taxonomy[OTL_taxonomy$name %in% na.omit(unique(iNaturalist_backbone_nonstandard$scientificName)),c("name","rank","sourceinfo")]
-OTL_bridge <- OTL_taxonomy_subset %>% filter(grepl("gbif",sourceinfo))
-OTL_bridge <- OTL_bridge %>% mutate(taxonID = str_extract(sourceinfo, "(?<=gbif:)\\d+"))
-OTL_bridge$taxonID <- as.numeric(OTL_bridge$taxonID)
-OTL_bridge <- OTL_bridge[,c("name","rank","taxonID")]
-OTL_bridge <- OTL_bridge[!duplicated(OTL_bridge),]
-OTL_bridge <- OTL_bridge[OTL_bridge$taxonID %in% backbone$taxonID & OTL_bridge$rank %in% c("species","genus","family","order","class","phylum"),]
-#Add in GBIF IDs to match taxonomic names and ranks .
-iNaturalist_backbone_nonstandard$taxonID <- NULL
-iNaturalist_backbone_nonstandard <- dplyr::left_join(iNaturalist_backbone_nonstandard,OTL_bridge,by=c("scientificName"="name"))
-
-#Add in GBIF IDs to match taxonomic names and ranks.
-tmp <- backbone[backbone$taxonRank=="species",c("gbif_species","speciesKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("scientificName"="gbif_species"))
-tmp <- backbone[backbone$taxonRank=="genus",c("gbif_genus","genusKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("genus"="gbif_genus"))
-tmp <- backbone[backbone$taxonRank=="family",c("gbif_family","familyKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("family"="gbif_family"))
-tmp <- backbone[backbone$taxonRank=="order",c("gbif_order","orderKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("order"="gbif_order"))
-tmp <- backbone[backbone$taxonRank=="class",c("gbif_class","classKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("class"="gbif_class"))
-tmp <- backbone[backbone$taxonRank=="phylum",c("gbif_phylum","phylumKey")]
-tmp <- tmp[!duplicated(tmp),]
-iNaturalist_backbone_standard <- dplyr::left_join(iNaturalist_backbone_standard,tmp,by=c("phylum"="gbif_phylum"))
-iNaturalist_backbone_standard <- as.data.frame(iNaturalist_backbone_standard)
-#Check if taxa, according to their GBIF taxonomy, were found in iNaturalist's records within California
-iNaturalist_taxa <- c(na.omit(unique(unlist(iNaturalist_backbone_standard[,c("phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey")]))),na.omit(unique(iNaturalist_backbone_nonstandard$taxonID)))
-TaxonomyExport_tmp <- TaxonomyExport_GBIF[,c("gbif_species","gbif_genus","gbif_family","gbif_order","gbif_class","gbif_phylum")]
-for(TaxonomicRank in c("species","genus","family","order","class","phylum")){
-  tmp <- backbone[backbone$taxonRank==TaxonomicRank,c(paste("gbif_",TaxonomicRank,sep=""),paste(TaxonomicRank,"Key",sep=""))]
-  tmp <- tmp[!duplicated(tmp),]
-  TaxonomyExport_tmp <- dplyr::left_join(TaxonomyExport_tmp,tmp)
-}
-TaxonomyExport_tmp <- TaxonomyExport_tmp %>%
-  mutate(taxonID = coalesce(speciesKey,genusKey,familyKey,orderKey,classKey,phylumKey))
-TaxonomyExport_tmp$iNaturalist_in_CA <- ifelse(TaxonomyExport_tmp$taxonID %in% iNaturalist_taxa,1,0)
-TaxonomyExport_tmp <- TaxonomyExport_tmp[,c("taxonID","iNaturalist_in_CA")]
-TaxonomyExport_tmp <- TaxonomyExport_tmp[!duplicated(TaxonomyExport_tmp),]
-TaxonomyExport_GBIF <- dplyr::left_join(TaxonomyExport_GBIF,TaxonomyExport_tmp[,c("taxonID","iNaturalist_in_CA")])
-#Check for any taxa which may be in iNaturalist, but may initially be mismatched due to taxonomic synonym issues.
-TaxonomyExport_GBIF_recheck <- TaxonomyExport_GBIF[is.na(TaxonomyExport_GBIF$iNaturalist_in_CA) | TaxonomyExport_GBIF$iNaturalist_in_CA==0,]
-TaxonomyExport_GBIF_recheck$iNaturalist_in_CA <- NULL
-TaxonomyExport_GBIF_recheck <- TaxonomyExport_GBIF_recheck %>%
-  mutate(Taxon = coalesce(gbif_genus,gbif_family,gbif_order,gbif_class,gbif_phylum))
-TaxonomyExport_GBIF_recheck$iNaturalist_in_CA <- ifelse(TaxonomyExport_GBIF_recheck$Taxon %in% na.omit(unique(iNaturalist_backbone$scientificName)),1,0)
-TaxonomyExport_GBIF_recheck <- TaxonomyExport_GBIF_recheck[,colnames(TaxonomyExport_GBIF)]
-TaxonomyExport_GBIF <- TaxonomyExport_GBIF[!is.na(TaxonomyExport_GBIF$iNaturalist_in_CA) & TaxonomyExport_GBIF$iNaturalist_in_CA==1,]
-TaxonomyExport_GBIF <- rbind(TaxonomyExport_GBIF,TaxonomyExport_GBIF_recheck)
-TaxonomyExport_GBIF <- TaxonomyExport_GBIF[,c("ncbi_species","ncbi_genus","ncbi_family","ncbi_order","ncbi_class","ncbi_phylum","taxonID","gbif_species","gbif_genus","gbif_family","gbif_order","gbif_class","gbif_phylum","eDNA_prevalence","GBIF_in_CA","GBIF_in_CA_Collections","iNaturalist_in_CA")]
 #Add in check if taxa are detected via eDNA, observed in GBIF and/or iNaturalist, but are not in a GBIF collection.
 TaxonomyExport_GBIF$Future_collection_target <- ifelse(TaxonomyExport_GBIF$GBIF_in_CA_Collections==0 & TaxonomyExport_GBIF$iNaturalist_in_CA==1 & TaxonomyExport_GBIF$GBIF_in_CA==1,1,0)
 #Export table.
