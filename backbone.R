@@ -5,6 +5,11 @@ require(tidyr)
 require(data.table)
 require(stringr)
 require(pbmcapply)
+require(httr)
+require(curl)
+require(jsonlite)
+httr::set_config(httr::config(http_version = 2))
+curl::handle_setopt(new_handle(),http_version=2)
 require(taxonbridge)#Make sure taxonkit is installed: conda install -c bioconda taxonkit
 
 wd <- ""
@@ -228,195 +233,224 @@ GBIF_NCBI <- fread(input="GBIF_NCBI_export.tsv",sep="\t")
 
 #Pull in full GBIF taxonomic data set and determine the most accepted taxon keys for each
 #name and rank.
-Taxon_GBIF <- fread(input="Taxon.tsv",sep="\t",select=c("taxonID","taxonRank","taxonomicStatus","parentNameUsageID","canonicalName","species","genus","family","order","class","phylum","kingdom"))
-Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful" & Taxon_GBIF$taxonRank %in% c("species","genus","family","order","class","phylum","kingdom"),]
+Taxon_GBIF <- fread(input="Taxon.tsv",sep="\t",select=c("taxonID","taxonRank","taxonomicStatus","parentNameUsageID","canonicalName","species","genus","family","order","class","phylum","kingdom"),na.strings=c("NA",""))
+Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful",]
+#Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful" & Taxon_GBIF$taxonRank %in% c("species","genus","family","order","class","phylum","kingdom"),]
 #Preferentially select accepted taxonomic assignments.
-Taxon_GBIF <- Taxon_GBIF %>%
-  group_by(canonicalName, taxonRank) %>%
+Taxon_GBIF <- Taxon_GBIF[, species := ifelse(taxonRank == "species", canonicalName, NA)]
+Taxon_GBIF <- Taxon_GBIF %>% mutate(gbif_name = coalesce(species, genus, family, order, class, phylum,kingdom))
+
+#Take GBIF database and reformat it so that all of the taxonomic ranks are arranged in
+#order columns
+gbif_taxa <- c()
+gbif_taxa_rows <- nrow(Taxon_GBIF)
+i=1
+gbif_taxa[[i]] <- Taxon_GBIF[,.(taxonID,parentNameUsageID,taxonRank,gbif_name)]
+while(gbif_taxa_rows>1){
+  i=i+1
+  gbif_taxa[[i]] <- gbif_taxa[[i-1]][(taxonID) %in% (parentNameUsageID),]
+  gbif_taxa_rows <- nrow(gbif_taxa[[i]])
+  print(paste(i,gbif_taxa_rows))
+}
+i_max <- i
+for(i in 1:i_max){
+  gbif_taxa[[i]] <- setnames(gbif_taxa[[i]], old = names(gbif_taxa[[i]]), new = c(paste("gbif_id_",(i),sep=""),paste("gbif_id_",(i+1),sep=""),paste("gbif_rank_",(i),sep=""),paste("gbif_name_",(i),sep="")))
+  if(i==1){gbif_taxa_full <- gbif_taxa[[i]]}
+  if(i>1){
+    gbif_taxa_full <- dplyr::left_join(gbif_taxa_full,gbif_taxa[[i]])
+  }
+}
+
+#Define a function to only retain standard taxonomic ranks.
+rank_cols <- colnames(gbif_taxa_full)[grep("gbif_rank",colnames(gbif_taxa_full))]
+is_valid_column <- function(column) {
+  any(column %in% c("species", "genus", "family", "order", "class", "phylum", "kingdom"))
+}
+
+#Define a function to only retain columns related to the names and IDs of
+#GBIF entries with standard taxonomic ranks.
+gbif_fix <- function(row_num) {
+  j <- row_num
+  valid_ranks <- rank_cols[sapply(gbif_taxa_full[j, ..rank_cols], is_valid_column)]
+  if(length(valid_ranks)>0){
+    valid_indices <- as.integer(gsub("[^0-9]", "", valid_ranks))
+    valid_names <- paste0("gbif_name_",valid_indices,sep="")
+    valid_ids <- paste0("gbif_id_",valid_indices,sep="")
+    tmp1 <- gbif_taxa_full[j, ..valid_names]
+    colnames(tmp1) <- paste0("gbif_",unlist(gbif_taxa_full[j, ..valid_ranks]),sep="")
+    tmp2 <- gbif_taxa_full[j, ..valid_ids]
+    colnames(tmp2) <- paste0("gbif_",unlist(gbif_taxa_full[j, ..valid_ranks]),"_id",sep="")
+    tmp <- cbind(tmp1,tmp2)
+    gbif_taxa_reformatted <- tmp
+    return(gbif_taxa_reformatted)
+  }
+}
+
+#Convert GBIF database to only have IDs and names for entries with standard taxonomic ranks.
+k_min <- 1
+k_delta <- 10000
+k <- 1
+k_max <- k*k_delta
+gbif_taxa_reformatted <- c()
+while(k_max < nrow(gbif_taxa_full)){
+  #Get full taxonomic paths for each taxon in GBIF
+  tmp <- pbmclapply(k_min:k_max, gbif_fix,mc.cores=detectCores())
+  tmp <- rbind.fill(tmp)
+  gbif_taxa_reformatted[[k]] <- tmp
+  print(paste(k,k_min,k_max))
+  k <- k+1
+  k_min <- k_max+1
+  k_max <- k*k_delta
+}
+k_max <- nrow(gbif_taxa_full)
+print(paste(k,k_min,k_max))
+tmp <- pbmclapply(k_min:k_max, gbif_fix,mc.cores=detectCores())
+tmp <- rbind.fill(tmp)
+gbif_taxa_reformatted[[k]] <- tmp
+#Get full taxonomic paths for each taxon in GBIF
+gbif_taxa_reformatted <- rbind.fill(gbif_taxa_reformatted)
+#Generate a GBIF ID column
+gbif_taxa_reformatted <- gbif_taxa_reformatted %>% mutate(taxonID = coalesce(gbif_species_id, gbif_genus_id, gbif_family_id, gbif_order_id, gbif_class_id, gbif_phylum_id, gbif_kingdom_id))
+#Rename GBIF columns
+gbif_taxa_reformatted <- gbif_taxa_reformatted %>% dplyr::rename(species=gbif_species, genus=gbif_genus, family=gbif_family, order=gbif_order, class=gbif_class, phylum=gbif_phylum, kingdom=gbif_kingdom, speciesKey=gbif_species_id, genusKey=gbif_genus_id, familyKey=gbif_family_id, orderKey=gbif_order_id, classKey=gbif_class_id, phylumKey=gbif_phylum_id, kingdomKey=gbif_kingdom_id)
+gbif_taxa_reformatted <- gbif_taxa_reformatted[!duplicated(gbif_taxa_reformatted),]
+#Export results
+write.table(gbif_taxa_reformatted,"gbif_taxa_reformatted.tsv",quote=FALSE,sep="\t",row.names = FALSE)
+
+#Merge in reformmated GBIF backbone
+gbif_taxa_full <- dplyr::left_join(Taxon_GBIF,gbif_taxa_reformatted)
+#Retain standard taxonomic ranks
+gbif_taxa_full <- gbif_taxa_full[gbif_taxa_full$taxonRank %in% GBIF_ranks,]
+
+#Preferentially retain entries with an accepted taxonomic status
+gbif_taxa_full <- gbif_taxa_full %>%
+  group_by(gbif_name, taxonRank) %>%
   slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
   ungroup()
-Taxon_GBIF <- setDT(Taxon_GBIF)
-Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$canonicalName!="",]
-Taxon_GBIF <- Taxon_GBIF[, species := ifelse(taxonRank == "species", canonicalName, NA)]
+gbif_taxa_full <- setDT(gbif_taxa_full)
 
-#Pull species entries from GBIF, assign species keys
-Taxon_GBIF_species <- Taxon_GBIF[taxonRank == "species"]
-Taxon_GBIF_species[, speciesKey := taxonID]
-#Pull genus entries from GBIF, assign genus keys
-Taxon_GBIF_genus <- Taxon_GBIF[taxonRank == "genus"]
-Taxon_GBIF_genus[, genusKey := taxonID]
-#Pull family entries from GBIF, assign family keys
-Taxon_GBIF_family <- Taxon_GBIF[taxonRank == "family"]
-Taxon_GBIF_family[, familyKey := taxonID]
-#Pull order entries from GBIF, assign order keys
-Taxon_GBIF_order <- Taxon_GBIF[taxonRank == "order"]
-Taxon_GBIF_order[, orderKey := taxonID]
-#Pull class entries from GBIF, assign class keys
-Taxon_GBIF_class <- Taxon_GBIF[taxonRank == "class"]
-Taxon_GBIF_class[, classKey := taxonID]
-#Pull phylum entries from GBIF, assign phylum keys
-Taxon_GBIF_phylum <- Taxon_GBIF[taxonRank == "phylum"]
-Taxon_GBIF_phylum[, phylumKey := taxonID]
-#Pull kingdom entries from GBIF, assign kingdom keys
-Taxon_GBIF_kingdom <- Taxon_GBIF[taxonRank == "kingdom"]
-Taxon_GBIF_kingdom[, kingdomKey := taxonID]
-#Assign higher order taxon keys
-Taxon_GBIF_species <- Taxon_GBIF_species[, genusKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_genus$taxonID)), parentNameUsageID, NA)]
-Taxon_GBIF_genus <- Taxon_GBIF_genus[, familyKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_family$taxonID)), parentNameUsageID, NA)]
-Taxon_GBIF_family <- Taxon_GBIF_family[, orderKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_order$taxonID)), parentNameUsageID, NA)]
-Taxon_GBIF_order <- Taxon_GBIF_order[, classKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_class$taxonID)), parentNameUsageID, NA)]
-Taxon_GBIF_class <- Taxon_GBIF_class[, phylumKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_phylum$taxonID)), parentNameUsageID, NA)]
-Taxon_GBIF_phylum <- Taxon_GBIF_phylum[, kingdomKey := ifelse(parentNameUsageID %in% na.omit(unique(Taxon_GBIF_kingdom$taxonID)), parentNameUsageID, NA)]
-#Merge in higher order keys to GBIF entries known down to species.
-tmp <- Taxon_GBIF_genus[,c("family","familyKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_species <- dplyr::left_join(Taxon_GBIF_species,tmp)
-tmp <- Taxon_GBIF_family[,c("order","orderKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_species <- dplyr::left_join(Taxon_GBIF_species,tmp)
-tmp <- Taxon_GBIF_order[,c("class","classKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_species <- dplyr::left_join(Taxon_GBIF_species,tmp)
-tmp <- Taxon_GBIF_class[,c("phylum","phylumKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_species <- dplyr::left_join(Taxon_GBIF_species,tmp)
-tmp <- Taxon_GBIF_phylum[,c("kingdom","kingdomKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_species <- dplyr::left_join(Taxon_GBIF_species,tmp)
-#Merge in higher order keys to GBIF entries known down to genus.
-tmp <- Taxon_GBIF_family[,c("order","orderKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_genus <- dplyr::left_join(Taxon_GBIF_genus,tmp)
-tmp <- Taxon_GBIF_order[,c("class","classKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_genus <- dplyr::left_join(Taxon_GBIF_genus,tmp)
-tmp <- Taxon_GBIF_class[,c("phylum","phylumKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_genus <- dplyr::left_join(Taxon_GBIF_genus,tmp)
-tmp <- Taxon_GBIF_phylum[,c("kingdom","kingdomKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_genus <- dplyr::left_join(Taxon_GBIF_genus,tmp)
-#Merge in higher order keys to GBIF entries known down to family.
-tmp <- Taxon_GBIF_order[,c("class","classKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_family <- dplyr::left_join(Taxon_GBIF_family,tmp)
-tmp <- Taxon_GBIF_class[,c("phylum","phylumKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_family <- dplyr::left_join(Taxon_GBIF_family,tmp)
-tmp <- Taxon_GBIF_phylum[,c("kingdom","kingdomKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_family <- dplyr::left_join(Taxon_GBIF_family,tmp)
-#Merge in higher order keys to GBIF entries known down to order.
-tmp <- Taxon_GBIF_class[,c("phylum","phylumKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_order <- dplyr::left_join(Taxon_GBIF_order,tmp)
-tmp <- Taxon_GBIF_phylum[,c("kingdom","kingdomKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_order <- dplyr::left_join(Taxon_GBIF_order,tmp)
-#Merge in higher order keys to GBIF entries known down to class.
-tmp <- Taxon_GBIF_phylum[,c("kingdom","kingdomKey")]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp[complete.cases(tmp),]
-Taxon_GBIF_class <- dplyr::left_join(Taxon_GBIF_class,tmp)
-#Merge GBIF tables together to export taxonomic rank by taxonomic key rank table
-gbif_taxa_full <- rbind.fill(Taxon_GBIF_species,Taxon_GBIF_genus,Taxon_GBIF_family,Taxon_GBIF_order,Taxon_GBIF_class,Taxon_GBIF_phylum,Taxon_GBIF_kingdom)
-gbif_taxa_full <- gbif_taxa_full[,c("species","genus","family","order","class","phylum","kingdom","speciesKey","genusKey","familyKey","orderKey","classKey","phylumKey","kingdomKey")]
-gbif_taxa_full <- gbif_taxa_full[!duplicated(gbif_taxa_full),]
+#Remove entries where both the taxon name and taxon key are not either both present or both missing.
+gbif_taxa_full <- gbif_taxa_full %>%
+  filter(!(is.na(species) & !is.na(speciesKey)) & 
+           !(is.na(speciesKey) & !is.na(species)) &
+           !(is.na(genus) & !is.na(genusKey)) &
+           !(is.na(genusKey) & !is.na(genus)) &
+           !(is.na(family) & !is.na(familyKey)) &
+           !(is.na(familyKey) & !is.na(family)) &
+           !(is.na(order) & !is.na(orderKey)) &
+           !(is.na(orderKey) & !is.na(order)) &
+           !(is.na(class) & !is.na(classKey)) &
+           !(is.na(classKey) & !is.na(class)) &
+           !(is.na(phylum) & !is.na(phylumKey)) &
+           !(is.na(phylumKey) & !is.na(phylum)) &
+           !(is.na(kingdom) & !is.na(kingdomKey)) &
+           !(is.na(kingdomKey) & !is.na(kingdom)))
+#Export GBIF taxonomy table with keys.
 write.table(gbif_taxa_full,"gbif_taxa_full.tsv",quote=FALSE,sep="\t",row.names = FALSE)
 gbif_taxa_full <- fread(input="gbif_taxa_full.tsv",sep="\t")
-gbif_taxa_full <- setDT(gbif_taxa_full)
-for (col in names(gbif_taxa_full)[sapply(gbif_taxa_full, is.character)]) {
-  gbif_taxa_full[get(col) == "", (col) := NA]
+
+#Merge in GBIF keys with GBIF-NCBI backbone.
+GBIF_NCBI_WithKeys <- dplyr::left_join(GBIF_NCBI,gbif_taxa_full)
+
+#Get the most common English common names per GBIF taxon ID
+Vernacular_Input <- fread(file="VernacularName.tsv",sep="\t",na.strings=c("NA",""))
+common_names <- Vernacular_Input[Vernacular_Input$language=="en" & !is.na(Vernacular_Input$language),c("taxonID","vernacularName")]
+# Group by 'taxonID' and 'vernacularName', count occurrences
+grouped <- common_names %>% dplyr::group_by(taxonID, vernacularName) %>% dplyr::summarize(count = n())
+# Find the most common 'vernacularName' for each 'taxonID'
+most_common <- grouped %>% group_by(taxonID) %>% slice_max(order_by = count, n = 1) %>% ungroup()
+#Keep only the first value of 'vernacularName' for each 'taxonID'
+first_common <- most_common %>% group_by(taxonID) %>% slice(1)
+
+#Get available common names for all taxa and ranks. Merge in common names.
+GBIF_NCBI_WithKeys_WithCommonNames <- GBIF_NCBI_WithKeys
+for(taxonomicRank in GBIF_ranks){
+  tmp <- first_common[,c("taxonID","vernacularName")]
+  names(tmp)[names(tmp) == "vernacularName"] <- paste("common",taxonomicRank,sep="_")
+  names(tmp)[names(tmp) == "taxonID"] <- paste(taxonomicRank,"Key",sep="")
+  GBIF_NCBI_WithKeys_WithCommonNames <- dplyr::left_join(GBIF_NCBI_WithKeys_WithCommonNames,tmp)
 }
 
-#Clean up missing genus key entries
-missing_genusKey_rows <- gbif_taxa_full[!is.na(genus) & is.na(genusKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="genus",c("genus","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(genus) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(genusKey = taxonID) %>% select(genus,genusKey)
-missing_genusKey_rows <- dplyr::left_join(missing_genusKey_rows[, !names(missing_genusKey_rows) %in% c("genusKey"), with = FALSE],tmp)
-missing_genusKey_rows <- missing_genusKey_rows[!is.na(missing_genusKey_rows$genus),]
-#Clean up missing family key entries
-missing_familyKey_rows <- gbif_taxa_full[!is.na(family) & is.na(familyKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="family",c("family","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(family) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(familyKey = taxonID) %>% select(family,familyKey)
-missing_familyKey_rows <- dplyr::left_join(missing_familyKey_rows[, !names(missing_familyKey_rows) %in% c("familyKey"), with = FALSE],tmp)
-missing_familyKey_rows <- missing_familyKey_rows[!is.na(missing_familyKey_rows$familyKey),]
-#Clean up missing order key entries
-missing_orderKey_rows <- gbif_taxa_full[!is.na(order) & is.na(orderKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="order",c("order","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(order) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(orderKey = taxonID) %>% select(order,orderKey)
-missing_orderKey_rows <- dplyr::left_join(missing_orderKey_rows[, !names(missing_orderKey_rows) %in% c("orderKey"), with = FALSE],tmp)
-missing_orderKey_rows <- missing_orderKey_rows[!is.na(missing_orderKey_rows$orderKey),]
-#Clean up missing class key entries
-missing_classKey_rows <- gbif_taxa_full[!is.na(class) & is.na(classKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="class",c("class","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(class) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(classKey = taxonID) %>% select(class,classKey)
-missing_classKey_rows <- dplyr::left_join(missing_classKey_rows[, !names(missing_classKey_rows) %in% c("classKey"), with = FALSE],tmp)
-missing_classKey_rows <- missing_classKey_rows[!is.na(missing_classKey_rows$classKey),]
-#Clean up missing phylum key entries
-missing_phylumKey_rows <- gbif_taxa_full[!is.na(phylum) & is.na(phylumKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="phylum",c("phylum","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(phylum) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(phylumKey = taxonID) %>% select(phylum,phylumKey)
-missing_phylumKey_rows <- dplyr::left_join(missing_phylumKey_rows[, !names(missing_phylumKey_rows) %in% c("phylumKey"), with = FALSE],tmp)
-missing_phylumKey_rows <- missing_phylumKey_rows[!is.na(missing_phylumKey_rows$phylumKey),]
-#Clean up missing kingdom key entries
-missing_kingdomKey_rows <- gbif_taxa_full[!is.na(kingdom) & is.na(kingdomKey), ]
-tmp <- Taxon_GBIF[Taxon_GBIF$taxonRank=="kingdom",c("kingdom","taxonID","taxonomicStatus")]
-tmp <- tmp[complete.cases(tmp),]
-tmp <- tmp[!duplicated(tmp),]
-tmp <- tmp %>%
-  group_by(kingdom) %>%
-  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
-  ungroup() %>% dplyr::rename(kingdomKey = taxonID) %>% select(kingdom,kingdomKey)
-missing_kingdomKey_rows <- dplyr::left_join(missing_kingdomKey_rows[, !names(missing_kingdomKey_rows) %in% c("kingdomKey"), with = FALSE],tmp)
-missing_kingdomKey_rows <- missing_kingdomKey_rows[!is.na(missing_kingdomKey_rows$kingdomKey),]
-#Merged rows which had missing key entries, but which were fixed.
-missing_Key_rows <- rbind.fill(missing_genusKey_rows,missing_familyKey_rows,missing_orderKey_rows,missing_classKey_rows,missing_phylumKey_rows,missing_kingdomKey_rows)
-#Merge fixed entries back into the GBIF taxonomic rank by taxonomic key rank table
-gbif_taxa_full <- gbif_taxa_full[!missing_Key_rows, on = .(species, genus, family, order, class, phylum, kingdom)]
-write.table(gbif_taxa_full,"gbif_taxa_full.tsv",quote=FALSE,sep="\t",row.names = FALSE)
-gbif_taxa_full <- fread(input="gbif_taxa_full.tsv",sep="\t")
-gbif_taxa_full <- setDT(gbif_taxa_full)
-for (col in names(gbif_taxa_full)[sapply(gbif_taxa_full, is.character)]) {
-  gbif_taxa_full[get(col) == "", (col) := NA]
+#Get the most resolved common name.
+GBIF_NCBI_WithKeys_WithCommonNames <- GBIF_NCBI_WithKeys_WithCommonNames %>%
+  mutate(Common_Name = coalesce(
+    common_species,
+    common_genus,
+    common_family,
+    common_order,
+    common_class,
+    common_phylum,
+    common_kingdom
+  ))
+
+#Get Phylopic images for all of the taxa in the GBIF-NCBI backbone.
+phylopic_export <- GBIF_NCBI_WithKeys_WithCommonNames[,c("gbif_name","Common_Name","speciesKey","genusKey","familyKey","orderKey","classKey","phylumKey","kingdomKey")]
+phylopic_export <- phylopic_export[!duplicated(phylopic_export),]
+phylopic_assigner <- function(row_num){
+  i <- row_num
+  Taxon_Backbone <- as.numeric(phylopic_export[i,c("speciesKey","genusKey","familyKey","orderKey","classKey","phylumKey","kingdomKey")])
+  res <- httr::GET(url=paste("https://api.phylopic.org/resolve/gbif.org/species?embed_primaryImage=true&objectIDs=",paste(Taxon_Backbone,collapse=","),sep=""),config = httr::config(connecttimeout = 100))
+  phylopic_query <- fromJSON(rawToChar(res$content))
+  Taxon_Image <- phylopic_query[["_embedded"]][["primaryImage"]][["_links"]][["rasterFiles"]][["href"]][[1]]
+  if(is.null(Taxon_Image)){
+    Taxon_Image <- "https://images.phylopic.org/images/5d646d5a-b2dd-49cd-b450-4132827ef25e/raster/487x1024.png"
+  }
+  phylopic_export[i,"Image_URL"] <- Taxon_Image
+  phylopic_assigned <- phylopic_export[i,]
+  return(phylopic_assigned)
 }
-write.table(gbif_taxa_full,"gbif_taxa_full.tsv",quote=FALSE,sep="\t",row.names = FALSE)
+phylopic_assigned <- c()
+tmp <- pbmclapply(1:nrow(phylopic_export), phylopic_assigner,mc.cores=detectCores())
+tmp <- rbindlist(tmp)
+#Export Phylopic image table
+write.table(tmp, "phylopic_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+
+phylopic_export <- fread(input="phylopic_export.tsv", sep = "\t")
+#Merge Phylopic image URLs in with other taxonomic data.
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic <-  dplyr::left_join(GBIF_NCBI_WithKeys_WithCommonNames,phylopic_export)
+
+#Read in GBIF file containing protected status information.
+#https://www.gbif.org/dataset/19491596-35ae-4a91-9a98-85cf505f1bd3
+#This file is a download of presence points with the IucnRedListCategory values of EX, NE, DD, LC, NT, VU, EN, CR, EW
+#Get IUCN status information
+IUCN_distribution <- fread(input="distribution.txt",sep="\t",na.strings=c("NA",""))
+IUCN_distribution <- IUCN_distribution[,.(V1,V4)]
+colnames(IUCN_distribution) <- c("iucnKey","iucnStatus")
+IUCN_distribution$iucnStatus <- str_to_title(IUCN_distribution$iucnStatus)
+
+#Create map for IUCN status values.
+IUCN_categories <- data.frame(iucnRedListCategory  = c("EX","NE","DD","LC","NT","VU","EN","CR","EW"),
+                              iucnStatus = c("Extinct","Not Evaluated","Data Deficient","Least Concern","Near Threatened","Vulnerable","Endangered","Critically Endangered","Extinct in the Wild"))
+
+#Merge IUCN categoreis into status values.
+IUCN_distribution <- dplyr::left_join(IUCN_distribution,IUCN_categories)
+
+#Get taxonomic data to merge into IUCN status data.
+IUCN_taxa <- fread(input="taxon.txt",sep="\t",na.strings=c("NA",""))
+IUCN_taxa <- IUCN_taxa[,.(V14,V3,V4,V5,V6,V7,V8,V9,V13)]
+colnames(IUCN_taxa) <- c("iucnKey","kingdom","phylum","class","order","family","genus","species_suffix","taxonomicStatus")
+#Clean up taxonomic data
+IUCN_taxa[,c("kingdom","phylum","class","order","family")] <- lapply(IUCN_taxa[,c("kingdom","phylum","class","order","family")], str_to_title)
+IUCN_taxa$species <- ifelse(!is.na(IUCN_taxa$species_suffix),paste(IUCN_taxa$genus,IUCN_taxa$species_suffix),IUCN_taxa$species_suffix)
+IUCN_taxa$species_suffix <- NULL
+IUCN_taxa <- IUCN_taxa %>% mutate(gbif_name = coalesce(species,genus,family,order,class,phylum,kingdom))
+#Preferentially using GBIF entries with an accepted taxonomy
+IUCN_taxa <- IUCN_taxa %>%
+  group_by(iucnKey) %>%
+  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
+  ungroup()
+
+#Merge taxonomies and IUCN status information.
+IUCN <- dplyr::left_join(IUCN_taxa,IUCN_distribution)
+IUCN <- IUCN[,c("species","genus","family","order","class","phylum","kingdom","gbif_name","iucnStatus","iucnRedListCategory")]
+IUCN <- IUCN[!duplicated(IUCN),]
+
+#Merge IUCN status into unified NCBI-GBIF backbone
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN <- dplyr::left_join(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic,IUCN)
+
+#Replace NA values in iucn_status with Not Evaluated
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnStatus[is.na(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnStatus)] <- "Not Evaluated"
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnRedListCategory[is.na(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnRedListCategory)] <- "NE"
+
+#Export table
+write.table(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN, "test_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
