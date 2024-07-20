@@ -39,13 +39,22 @@ GBIF_ranks <- c("species", "genus", "family", "order", "class", "phylum", "kingd
 #Read in NCBI-GBIF Taxonbridge 
 Taxon_Bridge <- fread(input="ncbi_gbif_backbone_full.tsv",sep="\t")
 Taxon_Bridge <- Taxon_Bridge[Taxon_Bridge$taxonomicStatus!="doubtful"]
+#Set genus
+Taxon_Bridge$genus <- ifelse(Taxon_Bridge$taxonRank %in% c("species","genus"),Taxon_Bridge$genericName,NA_character_)
+#Set species
+Taxon_Bridge$species <- ifelse(Taxon_Bridge$taxonRank=="species" & !is.na(Taxon_Bridge$specificEpithet),paste(Taxon_Bridge$genus,Taxon_Bridge$specificEpithet),NA_character_) 
+#Use the most accepted GBIF taxon ID
+Taxon_Bridge$taxonID <- ifelse(Taxon_Bridge$taxonomicStatus!="accepted",Taxon_Bridge$acceptedNameUsageID,Taxon_Bridge$taxonID)
 #Preferentially using GBIF entries with an accepted taxonomy for the GBIF-NCBI backbone
 Taxon_Bridge_Accepted <- Taxon_Bridge %>%
-  group_by(canonicalName, taxonRank) %>%
+  group_by(taxonID,ncbi_id) %>%
   slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
   ungroup()
 Taxon_Bridge_Accepted <- Taxon_Bridge_Accepted[Taxon_Bridge_Accepted$taxonRank %in% GBIF_ranks,]
+#Export
 write.table(Taxon_Bridge_Accepted,"Taxon_Bridge_Accepted.tsv",quote=FALSE,sep="\t",row.names = FALSE)
+rm(Taxon_Bridge)
+
 Taxon_Bridge_Accepted <- fread(input="Taxon_Bridge_Accepted.tsv",sep="\t")
 
 #Read in Open Tree of Life (OTL) backbone https://tree.opentreeoflife.org/about/taxonomy-version/ott3.5
@@ -76,40 +85,71 @@ OTL_standardized <- fread(input="OTL_standardized.tsv",sep="\t")
 
 #Function to find the most taxonomically resolved unique link between NCBI and GBIF
 #taxonomic IDs within the Open Tree of Life database
-select_rows <- function(df) {
-  result <- c()
-  for (i in 1:nrow(df)) {
-    current_row <- df[i, ]
-    original_name <- current_row$name
-    original_rank <- current_row$rank
-    original_ncbi_id <- current_row$ncbi_id
-    final_rank <- current_row$rank
-    # Check if ncbi_count and gbif_count both are equal to 1
-    if (current_row$ncbi_count == 1 & current_row$gbif_count == 1) {
+select_rows <- function(row_num) {
+  #result <- c()
+  i <- row_num
+  df <- OTL_standardized
+  current_row <- df[i, ]
+  original_name <- current_row$name
+  original_rank <- current_row$rank
+  original_ncbi_id <- current_row$ncbi_id
+  final_rank <- current_row$rank
+  # Check if ncbi_count and gbif_count both are equal to 1
+  if (current_row$ncbi_count == 1 & current_row$gbif_count == 1) {
+    current_row$name <- original_name
+    current_row$rank <- original_rank
+    current_row$ncbi_id <- original_ncbi_id
+    #result[[i]] <- current_row
+    result <- current_row
+  } else {
+    # Keep checking until ncbi_count and gbif_count both are equal to 1
+    while (!(current_row$ncbi_count == 1 & current_row$gbif_count == 1)) {
+      current_row <- df[df$uid == current_row$parent_uid, ]
+      if (nrow(current_row) == 0) break
       current_row$name <- original_name
       current_row$rank <- original_rank
       current_row$ncbi_id <- original_ncbi_id
-      result[[i]] <- current_row
-    } else {
-      # Keep checking until ncbi_count and gbif_count both are equal to 1
-      while (!(current_row$ncbi_count == 1 & current_row$gbif_count == 1)) {
-        current_row <- df[df$uid == current_row$parent_uid, ]
-        if (nrow(current_row) == 0) break
-        current_row$name <- original_name
-        current_row$rank <- original_rank
-        current_row$ncbi_id <- original_ncbi_id
-      }
-      result[[i]] <- current_row
-      print(paste(i,"of",nrow(df)))
+      current_row <- current_row %>%
+        group_by(uid, parent_uid) %>%
+        slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
+        ungroup()
+      current_row <- as.data.frame(current_row)
     }
+    #result[[i]] <- current_row
+    result <- current_row
+    #print(paste(i,"of",nrow(df)))
   }
   return(result)
 }
 
-#Find the most taxonomically resolved unique link between NCBI and GBIF
-#taxonomic IDs within the Open Tree of Life database
-OTL_GBIF_updated <- select_rows(OTL_standardized)
-OTL_GBIF_updated <- rbind.fill(OTL_GBIF_updated)
+#Convert OTL database to only have IDs and names for entries with standard taxonomic ranks.
+k_min <- 1
+k_delta <- 10000
+k <- 1
+k_max <- k*k_delta
+otl_taxa_reformatted <- c()
+while(k_max < nrow(OTL_standardized)){
+  #Get full taxonomic paths for each taxon in NCBI
+  tmp <- pbmclapply(k_min:k_max, select_rows,mc.cores=detectCores())
+  tmp <- rbind.fill(tmp)
+  otl_taxa_reformatted[[k]] <- tmp
+  print(paste(k,k_min,k_max))
+  k <- k+1
+  k_min <- k_max+1
+  k_max <- k*k_delta
+}
+k_max <- nrow(OTL_standardized)
+print(paste(k,k_min,k_max))
+tmp <- pbmclapply(k_min:k_max, select_rows,mc.cores=detectCores())
+tmp <- rbind.fill(tmp)
+otl_taxa_reformatted[[k]] <- tmp
+#Get full taxonomic paths for each taxon in OTL
+OTL_GBIF_updated <- rbind.fill(otl_taxa_reformatted)
+#Retain most accepted taxa from OTL
+OTL_GBIF_updated <- OTL_GBIF_updated %>%
+  group_by(ncbi_id,gbif_id) %>%
+  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
+  ungroup()
 #Clear doubtful and depreciated GBIF taxonomic entries.
 OTL_GBIF_updated <- OTL_GBIF_updated[!is.na(OTL_GBIF_updated$taxonRank),]
 #Rename columns
@@ -117,7 +157,6 @@ names(OTL_GBIF_updated)[names(OTL_GBIF_updated) == "name"] <- "ncbi_name"
 names(OTL_GBIF_updated)[names(OTL_GBIF_updated) == "rank"] <- "ncbi_rank"
 names(OTL_GBIF_updated)[names(OTL_GBIF_updated) == "taxonRank"] <- "gbif_rank"
 names(OTL_GBIF_updated)[names(OTL_GBIF_updated) == "name"] <- "ncbi_name"
-
 #Store results
 write.table(OTL_GBIF_updated,"OTL_GBIF_updated.tsv",quote=FALSE,sep="\t",row.names = FALSE)
 OTL_GBIF_updated <- fread(input="OTL_GBIF_updated.tsv",sep="\t")
@@ -207,6 +246,7 @@ tmp <- rbind.fill(tmp)
 ncbi_taxa_reformatted[[k]] <- tmp
 #Get full taxonomic paths for each taxon in NCBI
 ncbi_taxa_reformatted <- rbind.fill(ncbi_taxa_reformatted)
+
 #Generate a NCBI ID column
 ncbi_taxa_reformatted <- ncbi_taxa_reformatted %>% mutate(ncbi_id = coalesce(ncbi_species_id, ncbi_genus_id, ncbi_family_id, ncbi_order_id, ncbi_class_id, ncbi_phylum_id, ncbi_kingdom_id, ncbi_superkingdom_id))
 #Export results
@@ -215,15 +255,23 @@ ncbi_taxa_full <- fread(input="ncbi_taxa_full.tsv",sep="\t")
 
 #Merge Open Tree of Life database entries to the full GBIF taxonomic paths.
 GBIF_NCBI <- dplyr::left_join(OTL_GBIF_updated[,c("ncbi_name","ncbi_rank","ncbi_id","gbif_id","gbif_rank")],
-                              Taxon_Bridge_Accepted[,c("taxonID","canonicalName","taxonRank","specificEpithet","genericName","family","order","class","phylum","kingdom")],
+                              Taxon_Bridge_Accepted[,c("taxonID","taxonomicStatus","canonicalName","taxonRank","species","genus","family","order","class","phylum","kingdom")],
                               by=c("gbif_id"="taxonID"))
+rm(Taxon_Bridge_Accepted)
 
 #Mege in NCBI backbone.
 GBIF_NCBI <- dplyr::left_join(GBIF_NCBI,ncbi_taxa_full,by=c("ncbi_id"="ncbi_id"))
+#Preferentially using GBIF entries with an accepted taxonomy for the GBIF-NCBI backbone
+GBIF_NCBI <- GBIF_NCBI %>%
+  group_by(gbif_id,ncbi_id) %>%
+  slice(if ("accepted" %in% taxonomicStatus) which.max(taxonomicStatus == "accepted") else 1) %>%
+  ungroup()
+
 #Remove extraneous columns
-drop_cols <- c("canonicalName","taxonRank","specificEpithet","genericName")
+drop_cols <- c("canonicalName","taxonRank","taxonomicStatus")
 GBIF_NCBI <- GBIF_NCBI %>% dplyr::select(-one_of(drop_cols))
 GBIF_NCBI <- GBIF_NCBI[!duplicated(GBIF_NCBI),]
+GBIF_NCBI <- setDT(GBIF_NCBI)
 #Clear out entries with NCBI entries with no corresponding GBIF entries
 GBIF_NCBI <- GBIF_NCBI[rowSums(is.na(GBIF_NCBI[, ..GBIF_ranks])) != length(GBIF_ranks)]
 
@@ -234,7 +282,7 @@ GBIF_NCBI <- fread(input="GBIF_NCBI_export.tsv",sep="\t")
 #Pull in full GBIF taxonomic data set and determine the most accepted taxon keys for each
 #name and rank.
 Taxon_GBIF <- fread(input="Taxon.tsv",sep="\t",select=c("taxonID","taxonRank","taxonomicStatus","parentNameUsageID","canonicalName","species","genus","family","order","class","phylum","kingdom"),na.strings=c("NA",""))
-Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful",]
+#Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful",]
 #Taxon_GBIF <- Taxon_GBIF[Taxon_GBIF$taxonomicStatus!="doubtful" & Taxon_GBIF$taxonRank %in% c("species","genus","family","order","class","phylum","kingdom"),]
 #Preferentially select accepted taxonomic assignments.
 Taxon_GBIF <- Taxon_GBIF[, species := ifelse(taxonRank == "species", canonicalName, NA)]
@@ -245,7 +293,7 @@ Taxon_GBIF <- Taxon_GBIF %>% mutate(gbif_name = coalesce(species, genus, family,
 gbif_taxa <- c()
 gbif_taxa_rows <- nrow(Taxon_GBIF)
 i=1
-gbif_taxa[[i]] <- Taxon_GBIF[,.(taxonID,parentNameUsageID,taxonRank,gbif_name)]
+gbif_taxa[[i]] <- Taxon_GBIF[,.(taxonID,parentNameUsageID,taxonRank,gbif_name,taxonomicStatus)]
 while(gbif_taxa_rows>1){
   i=i+1
   gbif_taxa[[i]] <- gbif_taxa[[i-1]][(taxonID) %in% (parentNameUsageID),]
@@ -254,7 +302,7 @@ while(gbif_taxa_rows>1){
 }
 i_max <- i
 for(i in 1:i_max){
-  gbif_taxa[[i]] <- setnames(gbif_taxa[[i]], old = names(gbif_taxa[[i]]), new = c(paste("gbif_id_",(i),sep=""),paste("gbif_id_",(i+1),sep=""),paste("gbif_rank_",(i),sep=""),paste("gbif_name_",(i),sep="")))
+  gbif_taxa[[i]] <- setnames(gbif_taxa[[i]], old = names(gbif_taxa[[i]]), new = c(paste("gbif_id_",(i),sep=""),paste("gbif_id_",(i+1),sep=""),paste("gbif_rank_",(i),sep=""),paste("gbif_name_",(i),sep=""),paste("gbif_status_",(i),sep="")))
   if(i==1){gbif_taxa_full <- gbif_taxa[[i]]}
   if(i>1){
     gbif_taxa_full <- dplyr::left_join(gbif_taxa_full,gbif_taxa[[i]])
@@ -316,6 +364,7 @@ gbif_taxa_reformatted <- gbif_taxa_reformatted %>% dplyr::rename(species=gbif_sp
 gbif_taxa_reformatted <- gbif_taxa_reformatted[!duplicated(gbif_taxa_reformatted),]
 #Export results
 write.table(gbif_taxa_reformatted,"gbif_taxa_reformatted.tsv",quote=FALSE,sep="\t",row.names = FALSE)
+rm(Taxon_GBIF)
 
 #Merge in reformmated GBIF backbone
 gbif_taxa_full <- dplyr::left_join(Taxon_GBIF,gbif_taxa_reformatted)
@@ -351,6 +400,7 @@ gbif_taxa_full <- fread(input="gbif_taxa_full.tsv",sep="\t")
 
 #Merge in GBIF keys with GBIF-NCBI backbone.
 GBIF_NCBI_WithKeys <- dplyr::left_join(GBIF_NCBI,gbif_taxa_full)
+rm(gbif_taxa_full)
 
 #Get the most common English common names per GBIF taxon ID
 Vernacular_Input <- fread(file="VernacularName.tsv",sep="\t",na.strings=c("NA",""))
@@ -401,7 +451,7 @@ phylopic_assigner <- function(row_num){
 }
 phylopic_assigned <- c()
 tmp <- pbmclapply(1:nrow(phylopic_export), phylopic_assigner,mc.cores=detectCores())
-tmp <- rbindlist(tmp)
+phylopic_export <- rbindlist(tmp)
 #Export Phylopic image table
 write.table(tmp, "phylopic_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
 
@@ -451,6 +501,10 @@ GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN <- dplyr::left_join(GBI
 #Replace NA values in iucn_status with Not Evaluated
 GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnStatus[is.na(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnStatus)] <- "Not Evaluated"
 GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnRedListCategory[is.na(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnRedListCategory)] <- "NE"
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN <- GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN[!duplicated(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN),]
 
 #Export table
 write.table(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN, "test_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+
+#Columns for exporting to database.
+export_columns <- c("id","superkingdom","kingdom","phylum","class","order","family","genus","species","Taxon","rank","kingdomKey","phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey","Common_Name","iucnStatus","Image_URL","UniqueID")
