@@ -12,7 +12,8 @@ httr::set_config(httr::config(http_version = 2))
 curl::handle_setopt(new_handle(),http_version=2)
 require(taxonbridge)#Make sure taxonkit is installed: conda install -c bioconda taxonkit
 
-wd <- ""
+wd <- "/Users/levisimons/Desktop/Archive/backbone"
+wd <- "/home/exouser/backbone"
 
 setwd(wd)
 
@@ -504,7 +505,37 @@ GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN$iucnRedListCategory[is.
 GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN <- GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN[!duplicated(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN),]
 
 #Export table
-write.table(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN, "test_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+write.table(GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN, "full_backbone_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN <- fread(input="full_backbone_export.tsv",sep="\t")
+
+#Export selected columns to postgresql database.
+require(digest)
+require(DBI)
+require(RPostgreSQL)
+readRenviron(".env")
+taxonomy_home <- Sys.getenv("taxonomy_home")
+db_host <- Sys.getenv("db_host")
+db_port <- Sys.getenv("db_port")
+db_name <- Sys.getenv("db_name")
+db_user <- Sys.getenv("db_user")
+db_pass <- Sys.getenv("db_pass")
+Database_Driver <- dbDriver("PostgreSQL")
+
+#Select and rename columns
+GBIF_NCBI_eDNAExplorer_Export <- GBIF_NCBI_WithKeys_WithCommonNames_WithPhylopic_WithIUCN[,c("ncbi_superkingdom","ncbi_kingdom","ncbi_phylum","ncbi_class","ncbi_order","ncbi_family","ncbi_genus","ncbi_species","ncbi_name","ncbi_rank","kingdomKey","phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey","Common_Name","iucnStatus","Image_URL")]
+GBIF_NCBI_eDNAExplorer_Export <- GBIF_NCBI_eDNAExplorer_Export %>% dplyr::rename(superkingdom=ncbi_superkingdom, kingdom=ncbi_kingdom, phylum=ncbi_phylum, class=ncbi_class, order=ncbi_order, family=ncbi_family, genus=ncbi_genus, species=ncbi_species, Taxon=ncbi_name, rank=ncbi_rank)
+
 
 #Columns for exporting to database.
-export_columns <- c("id","superkingdom","kingdom","phylum","class","order","family","genus","species","Taxon","rank","kingdomKey","phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey","Common_Name","iucnStatus","Image_URL","UniqueID")
+#export_columns <- c("id","superkingdom","kingdom","phylum","class","order","family","genus","species","Taxon","rank","kingdomKey","phylumKey","classKey","orderKey","familyKey","genusKey","speciesKey","Common_Name","iucnStatus","Image_URL","UniqueID")
+
+#Create unique ID for the Taxonomy database.
+GBIF_NCBI_eDNAExplorer_Export$UniqueID <- sapply(paste(GBIF_NCBI_eDNAExplorer_Export$species,GBIF_NCBI_eDNAExplorer_Export$genus,GBIF_NCBI_eDNAExplorer_Export$family,GBIF_NCBI_eDNAExplorer_Export$order,GBIF_NCBI_eDNAExplorer_Export$class,GBIF_NCBI_eDNAExplorer_Export$phylum,GBIF_NCBI_eDNAExplorer_Export$kingdom,GBIF_NCBI_eDNAExplorer_Export$Taxon,GBIF_NCBI_eDNAExplorer_Export$rank,GBIF_NCBI_eDNAExplorer_Export$Image_URL,GBIF_NCBI_eDNAExplorer_Export$Common_Name,GBIF_NCBI_eDNAExplorer_Export$iucnStatus),digest,algo="md5")
+
+#Export to posgresql database
+con <- dbConnect(Database_Driver,host = db_host,port = db_port,dbname = db_name, user = db_user, password = db_pass)
+#Clear old taxonomy entries.
+dbExecute(con,'DELETE FROM "Taxonomy"')
+#Write out new taxonomy table
+dbWriteTable(con,"Taxonomy",GBIF_NCBI_eDNAExplorer_Export,row.names=FALSE,append=TRUE)
+sapply(dbListConnections(Database_Driver), dbDisconnect)
