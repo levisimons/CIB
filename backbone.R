@@ -532,6 +532,9 @@ GBIF_NCBI_eDNAExplorer_Export <- GBIF_NCBI_eDNAExplorer_Export %>% dplyr::rename
 #Create unique ID for the Taxonomy database.
 GBIF_NCBI_eDNAExplorer_Export$UniqueID <- sapply(paste(GBIF_NCBI_eDNAExplorer_Export$species,GBIF_NCBI_eDNAExplorer_Export$genus,GBIF_NCBI_eDNAExplorer_Export$family,GBIF_NCBI_eDNAExplorer_Export$order,GBIF_NCBI_eDNAExplorer_Export$class,GBIF_NCBI_eDNAExplorer_Export$phylum,GBIF_NCBI_eDNAExplorer_Export$kingdom,GBIF_NCBI_eDNAExplorer_Export$Taxon,GBIF_NCBI_eDNAExplorer_Export$rank,GBIF_NCBI_eDNAExplorer_Export$Image_URL,GBIF_NCBI_eDNAExplorer_Export$Common_Name,GBIF_NCBI_eDNAExplorer_Export$iucnStatus),digest,algo="md5")
 
+#Export file
+write.table(GBIF_NCBI_eDNAExplorer_Export, "GBIF_NCBI_eDNAExplorer_Export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+
 #Export to posgresql database
 con <- dbConnect(Database_Driver,host = db_host,port = db_port,dbname = db_name, user = db_user, password = db_pass)
 #Clear old taxonomy entries.
