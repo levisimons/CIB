@@ -8,7 +8,7 @@ require(data.table)
 require(stringr)
 require(biomformat)
 
-wd <- ""
+wd <- "/Users/levisimons/Desktop/CIB"
 
 setwd(wd)
 
@@ -305,11 +305,15 @@ TaxonomyExport_GBIF[, GBIF_in_CA_Collections := gbif_name %in% CA_GBIF_Collectio
 
 #Determine which eDNA occurrences are found in iNaturalist in California
 #Read in iNaturalist taxon ID to GBIF ID backbone.
-iNaturalist_Taxa <- fread(input="iNaturalist_taxa.csv",sep=",")
-indx <- which(sapply(iNaturalist_Taxa, is.character)) 
-for (j in indx) set(iNaturalist_Taxa, i = grep("^$|^ $", iNaturalist_Taxa[[j]]), j = j, value = NA_character_)
+iNaturalist_backbone <- fread(input="iNaturalist_backbone.csv",sep=",")
+indx <- which(sapply(iNaturalist_backbone, is.character)) 
+for (j in indx) set(iNaturalist_backbone, i = grep("^$|^ $", iNaturalist_backbone[[j]]), j = j, value = NA_character_)
+#Get corresponding GBIF taxonomies for iNaturalist taxon IDs
+if(Primer=="CO1_Metazoa"){iNaturalist_taxa <- fread(input="iNaturalist_Invertebrates.csv",sep=",")}
+if(Primer=="ITS1_Fungi"){iNaturalist_taxa <- fread(input="iNaturalist_Fungi.csv",sep=",")}
+iNaturalist_backbone <- iNaturalist_backbone[iNaturalist_backbone$id %in% iNaturalist_taxa$taxon_id,]
 #Get unique taxa, genus level up, for iNaturalist California data.
-iNaturalist_backbone <- iNaturalist_Taxa[,.(genus,family,order,class,phylum,kingdom)]
+iNaturalist_backbone <- iNaturalist_backbone[,.(genus,family,order,class,phylum,kingdom)]
 iNaturalist_backbone <- iNaturalist_backbone[!duplicated(iNaturalist_backbone),]
 #Determine which eDNA occurrences are found in iNaturalist in California
 TaxonomyExport_GBIF$gbif_name_tmp <- ifelse(TaxonomyExport_GBIF$gbif_rank=="species",TaxonomyExport_GBIF$genus,TaxonomyExport_GBIF$gbif_name)
