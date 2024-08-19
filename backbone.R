@@ -12,8 +12,7 @@ httr::set_config(httr::config(http_version = 2))
 curl::handle_setopt(new_handle(),http_version=2)
 require(taxonbridge)#Make sure taxonkit is installed: conda install -c bioconda taxonkit
 
-wd <- "/Users/levisimons/Desktop/Archive/backbone"
-wd <- "/home/exouser/backbone"
+wd <- ""
 
 setwd(wd)
 
@@ -440,7 +439,8 @@ phylopic_export <- phylopic_export[!duplicated(phylopic_export),]
 phylopic_assigner <- function(row_num){
   i <- row_num
   Taxon_Backbone <- as.numeric(phylopic_export[i,c("speciesKey","genusKey","familyKey","orderKey","classKey","phylumKey","kingdomKey")])
-  res <- httr::GET(url=paste("https://api.phylopic.org/resolve/gbif.org/species?embed_primaryImage=true&objectIDs=",paste(Taxon_Backbone,collapse=","),sep=""),config = httr::config(connecttimeout = 100))
+  #res <- httr::GET(url=paste("https://api.phylopic.org/resolve/gbif.org/species?embed_primaryImage=true&objectIDs=",paste(Taxon_Backbone,collapse=","),sep=""),config = httr::config(connecttimeout = 100))
+  res <- httr::GET(url=paste("https://api.phylopic.org/resolve/gbif.org/species?embed_primaryImage=true&?filter_license_nc=false&objectIDs=",paste(Taxon_Backbone,collapse=","),sep=""),config = httr::config(connecttimeout = 100))
   phylopic_query <- fromJSON(rawToChar(res$content))
   Taxon_Image <- phylopic_query[["_embedded"]][["primaryImage"]][["_links"]][["rasterFiles"]][["href"]][[1]]
   if(is.null(Taxon_Image)){
@@ -454,7 +454,7 @@ phylopic_assigned <- c()
 tmp <- pbmclapply(1:nrow(phylopic_export), phylopic_assigner,mc.cores=detectCores())
 phylopic_export <- rbindlist(tmp)
 #Export Phylopic image table
-write.table(tmp, "phylopic_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
+write.table(phylopic_export, "phylopic_export.tsv", sep = "\t", col.names = TRUE, row.names = FALSE)
 
 phylopic_export <- fread(input="phylopic_export.tsv", sep = "\t")
 #Merge Phylopic image URLs in with other taxonomic data.
@@ -473,7 +473,7 @@ IUCN_distribution$iucnStatus <- str_to_title(IUCN_distribution$iucnStatus)
 IUCN_categories <- data.frame(iucnRedListCategory  = c("EX","NE","DD","LC","NT","VU","EN","CR","EW"),
                               iucnStatus = c("Extinct","Not Evaluated","Data Deficient","Least Concern","Near Threatened","Vulnerable","Endangered","Critically Endangered","Extinct in the Wild"))
 
-#Merge IUCN categoreis into status values.
+#Merge IUCN categories into status values.
 IUCN_distribution <- dplyr::left_join(IUCN_distribution,IUCN_categories)
 
 #Get taxonomic data to merge into IUCN status data.
