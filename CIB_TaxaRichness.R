@@ -8,7 +8,7 @@ require(data.table)
 require(stringr)
 require(biomformat)
 
-wd <- ""
+wd <- "/Users/levisimons/Desktop/CIB"
 
 setwd(wd)
 
@@ -145,8 +145,8 @@ Project_OTU_Table$Taxonomic_Path <- rownames(Project_OTU_Table)
 Project_OTU_Table <- separate(data = Project_OTU_Table, col = "Taxonomic_Path", sep=";",into = TaxonomicRanks)
 Project_OTU_Table[Project_OTU_Table == "NA"] <- NA
 #Select taxonomic group to calculate richness
-selected_taxon <- "Diptera"
-selected_rank <- "order"
+selected_taxon <- "Cortinariaceae"
+selected_rank <- "family"
 #Calculate taxonomic richness within selected taxonomic group
 Selected_OTU_Table <- Project_OTU_Table[!is.na(Project_OTU_Table[,selected_rank]) & Project_OTU_Table[,selected_rank]==selected_taxon,]
 Selected_Taxonomic_Richness <- as.data.frame(colSums(Selected_OTU_Table[,!colnames(Selected_OTU_Table) %in% TaxonomicRanks]))
@@ -155,11 +155,30 @@ colnames(Selected_Taxonomic_Richness) <- paste(selected_taxon,"_",selected_rank,
 Project_Metadata <- as.data.frame(sample_data(physeq_retain))
 Selected_Taxonomic_Richness$Sample.ID <- rownames(Selected_Taxonomic_Richness)
 Richness_Export <- dplyr::left_join(Selected_Taxonomic_Richness,Project_Metadata[,c("Sample.ID","Latitude","Longitude","Sample.Date","projectid","Substrate")])
-write.table(Richness_Export,paste(Primer,selected_taxon,selected_rank,"Richness.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
+#write.table(Richness_Export,paste(Primer,selected_taxon,selected_rank,"Richness.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
 
 #Export the number of samples each unique taxon appears in.
 Prevalence_Export <- as.data.frame(rowSums(Project_OTU_Table[,!colnames(Project_OTU_Table) %in% TaxonomicRanks]))
 colnames(Prevalence_Export) <- c("Prevalence")
 Prevalence_Export$Taxon <- rownames(Prevalence_Export)
 Prevalence_Export <- separate(data = Prevalence_Export, col = "Taxon", sep=";",into = TaxonomicRanks)
-write.table(Prevalence_Export,paste(Primer,selected_taxon,selected_rank,"Prevalence.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
+#write.table(Prevalence_Export,paste(Primer,selected_taxon,selected_rank,"Prevalence.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
+
+#Find the number of unique taxa detected via eDNA, but not found in a CA GBIF collections.
+TaxonomyExport_GBIF <- fread(input=paste(Primer,"_eDNAPrevalence_GBIF.tsv",sep=""),sep="\t")
+TaxonomyExport_GBIF <- as.data.frame(TaxonomyExport_GBIF[TaxonomyExport_GBIF$GBIF_in_CA_Collections==0,])
+Selected_Taxonomic_Richness <- c()
+i=1
+for(TaxonomicRank in unique(TaxonomyExport_GBIF$gbif_rank)){
+  Selected_OTU_Table <- Project_OTU_Table[!is.na(Project_OTU_Table[,TaxonomicRank]) & Project_OTU_Table[,TaxonomicRank] %in% na.omit(TaxonomyExport_GBIF[TaxonomyExport_GBIF$gbif_rank==TaxonomicRank,"gbif_name"]),]
+  Selected_Taxonomic_Richness_tmp <- as.data.frame(colSums(Selected_OTU_Table[,!colnames(Selected_OTU_Table) %in% TaxonomicRanks]))
+  colnames(Selected_Taxonomic_Richness_tmp) <- c("Richness")
+  Selected_Taxonomic_Richness_tmp$Sample.ID <- rownames(Selected_Taxonomic_Richness_tmp)
+  Selected_Taxonomic_Richness_tmp$gbif_rank <- TaxonomicRank
+  Selected_Taxonomic_Richness[[i]] <- Selected_Taxonomic_Richness_tmp
+  i=i+1
+}
+Selected_Taxonomic_Richness <- rbindlist(Selected_Taxonomic_Richness)
+Selected_Taxonomic_Richness <- aggregate(Richness~Sample.ID,Selected_Taxonomic_Richness[,c("Sample.ID","Richness")],sum)
+Uncollected_Richness_Export <- dplyr::left_join(Selected_Taxonomic_Richness,Project_Metadata[,c("Sample.ID","Latitude","Longitude","Sample.Date","projectid","Substrate")])
+write.table(Uncollected_Richness_Export,paste(Primer,"UncollectedRichness.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
