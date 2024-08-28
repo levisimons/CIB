@@ -165,6 +165,7 @@ Prevalence_Export <- separate(data = Prevalence_Export, col = "Taxon", sep=";",i
 #write.table(Prevalence_Export,paste(Primer,selected_taxon,selected_rank,"Prevalence.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
 
 #Find the number of unique taxa detected via eDNA, but not found in a CA GBIF collections.
+#Prevalence files generated here: https://github.com/levisimons/CIB/blob/main/CIB_Prevalence.R
 TaxonomyExport_GBIF <- fread(input=paste(Primer,"_eDNAPrevalence_GBIF.tsv",sep=""),sep="\t")
 TaxonomyExport_GBIF <- as.data.frame(TaxonomyExport_GBIF[TaxonomyExport_GBIF$GBIF_in_CA_Collections==0,])
 Selected_Taxonomic_Richness <- c()
