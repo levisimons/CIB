@@ -25,6 +25,7 @@ BOLD_Fungi <- BOLD_Fungi %>% mutate_all(na_if,"")
 BOLD_Fungi <- BOLD_Fungi[!duplicated(BOLD_Fungi),]
 BOLD_Fungi <- BOLD_Fungi %>% mutate(BOLD_name = coalesce(species_name, genus_name, family_name, order_name,class_name, phylum_name))
 BOLD_Fungi <- BOLD_Fungi %>% mutate(BOLD_rank = case_when(!is.na(species_name) ~ "species",!is.na(genus_name) ~ "genus",!is.na(family_name) ~ "family",!is.na(order_name) ~ "order",!is.na(class_name) ~ "class",!is.na(phylum_name) ~ "phylum",TRUE ~ NA_character_))
+BOLD_Fungi <- BOLD_Fungi %>% dplyr::rename(species=species_name,genus=genus_name,family=family_name,order=order_name,class=class_name,phylum=phylum_name)
 write.table(BOLD_Fungi,"BOLD_Fungi.tsv",quote=FALSE,sep="\t",row.names = FALSE)
 
 #Read in BOLD invertebrate occurrences, filter them to be within California, and generate a unique taxonomic table.
@@ -39,4 +40,5 @@ BOLD_Invertebrate <- BOLD_Invertebrate %>% mutate_all(na_if,"")
 BOLD_Invertebrate <- BOLD_Invertebrate[!duplicated(BOLD_Invertebrate),]
 BOLD_Invertebrate <- BOLD_Invertebrate %>% mutate(BOLD_name = coalesce(species_name, genus_name, family_name, order_name,class_name, phylum_name))
 BOLD_Invertebrate <- BOLD_Invertebrate %>% mutate(BOLD_rank = case_when(!is.na(species_name) ~ "species",!is.na(genus_name) ~ "genus",!is.na(family_name) ~ "family",!is.na(order_name) ~ "order",!is.na(class_name) ~ "class",!is.na(phylum_name) ~ "phylum",TRUE ~ NA_character_))
+BOLD_Invertebrate <- BOLD_Invertebrate %>% dplyr::rename(species=species_name,genus=genus_name,family=family_name,order=order_name,class=class_name,phylum=phylum_name)
 write.table(BOLD_Invertebrate,"BOLD_Invertebrates.tsv",quote=FALSE,sep="\t",row.names = FALSE)
