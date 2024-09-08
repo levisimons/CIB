@@ -8,7 +8,7 @@ require(data.table)
 require(stringr)
 require(biomformat)
 
-wd <- "/Users/levisimons/Desktop/CIB"
+wd <- ""
 
 setwd(wd)
 
@@ -323,13 +323,24 @@ TaxonomyExport_GBIF[, iNaturalist_in_CA := gbif_name_tmp %in% iNaturalist_backbo
 TaxonomyExport_GBIF$gbif_name_tmp <- NULL
 TaxonomyExport_GBIF$gbif_rank_tmp <- NULL
 
+#Determine which eDNA occurrences are found in BOLD in California
+#Tables are generated here: https://github.com/levisimons/CIB/blob/main/CIB_BOLD.R
+if(Primer=="CO1_Metazoa"){BOLD_Input <- fread(input="BOLD_Invertebrates.tsv",sep="\t")}
+if(Primer=="ITS1_Fungi"){BOLD_Input <- fread(input="BOLD_Fungi.tsv",sep="\t")}
+TaxonomyExport_GBIF[, BOLD_in_CA := gbif_name %in% BOLD_Input[[gbif_rank]], by = gbif_rank]
+
 #Set eDNA to observation/collection comparison columns to numeric
 TaxonomyExport_GBIF$GBIF_in_CA <- as.integer(TaxonomyExport_GBIF$GBIF_in_CA)
 TaxonomyExport_GBIF$GBIF_in_CA_Collections <- as.integer(TaxonomyExport_GBIF$GBIF_in_CA_Collections)
 TaxonomyExport_GBIF$iNaturalist_in_CA <- as.integer(TaxonomyExport_GBIF$iNaturalist_in_CA)
+TaxonomyExport_GBIF$BOLD_in_CA <- as.integer(TaxonomyExport_GBIF$BOLD_in_CA)
 
-#Add in check if taxa are detected via eDNA, observed in GBIF and/or iNaturalist, but are not in a GBIF collection.
-TaxonomyExport_GBIF$Future_collection_target <- ifelse(TaxonomyExport_GBIF$GBIF_in_CA_Collections==0 & TaxonomyExport_GBIF$iNaturalist_in_CA==1 & TaxonomyExport_GBIF$GBIF_in_CA==1,1,0)
+#Add in check if taxa are detected via eDNA, but not yet found in a GBIF collection or the BOLD database.
+TaxonomyExport_GBIF$Uncollected <- ifelse(TaxonomyExport_GBIF$GBIF_in_CA_Collections==0 & TaxonomyExport_GBIF$BOLD_in_CA==0,1,0)
+
+#Retain only fungal or invertebrate results
+if(Primer=="CO1_Metazoa"){TaxonomyExport_GBIF <- TaxonomyExport_GBIF[TaxonomyExport_GBIF$kingdom=="Animalia",]}
+if(Primer=="ITS1_Fungi"){TaxonomyExport_GBIF <- TaxonomyExport_GBIF[TaxonomyExport_GBIF$kingdom=="Fungi",]}
 
 #Export table.
 write.table(TaxonomyExport_GBIF,paste(Primer,"_eDNAPrevalence_GBIF.tsv",sep=""),quote=FALSE,sep="\t",row.names = FALSE)
