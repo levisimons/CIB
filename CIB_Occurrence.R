@@ -178,9 +178,11 @@ Background$Present <- 0
 Background <- Background[,c("Taxon","taxonRank","scientificName","Latitude","Longitude","Source","Present")]
 
 #Obtain occurrences found in GBIF in California
-GBIF_Export <- as.data.frame(occ_data(scientificName = selected_taxon, publishingCountry = "US",stateProvince = "California")$data)
+#GBIF.org (25 June 2024) GBIF Occurrence Download https://doi.org/10.15468/dl.u8mz2u
+#All taxa in California
+CA_GBIF_All <- fread(input="0093168-240506114902167.zip",select=c("kingdom","phylum","class","order","family","genus","species","decimalLatitude","decimalLongitude"),na.strings=c("NA",""))
+GBIF_Export <- CA_GBIF_All[!is.na(CA_GBIF_All[[selected_rank]]) & CA_GBIF_All[[selected_rank]]==selected_taxon,]
 GBIF_Export <- GBIF_Export[!is.na(GBIF_Export$decimalLatitude),]
-GBIF_Export <- GBIF_Export[GBIF_Export$taxonomicStatus=="ACCEPTED",]
 GBIF_Export$Taxon <- selected_taxon
 GBIF_Export$taxonRank <- selected_rank
 GBIF_Export <- GBIF_Export %>%
@@ -190,6 +192,7 @@ GBIF_Export$Present <- 1
 GBIF_Export$Longitude <- GBIF_Export$decimalLongitude
 GBIF_Export$Latitude <- GBIF_Export$decimalLatitude
 GBIF_Export <- GBIF_Export[,c("Taxon","taxonRank","scientificName","Latitude","Longitude","Source","Present")]
+
 
 set.seed(1)
 #Randomly select an equal number of background points to presence points.
