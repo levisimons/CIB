@@ -203,4 +203,4 @@ n_occurrences <- nrow(Occurrence_Export)+nrow(GBIF_Export)
 #Combine presence and randomly selected background points
 Occurrences_Export <- rbind(Occurrence_Export,GBIF_Export,Background[sample(nrow(Background), n_occurrences), ])
 #Export
-write.table(Occurrences_Export,paste(Primer,selected_taxon,selected_rank,"Occurrence.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
+write.table(Occurrences_Export,paste(Primer,gsub(" ","_",selected_taxon),selected_rank,"Occurrence.csv",sep="_"), row.names=FALSE, sep=",",quote = FALSE)
