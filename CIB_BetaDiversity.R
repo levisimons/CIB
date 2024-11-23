@@ -8,7 +8,7 @@ require(data.table)
 require(stringr)
 require(biomformat)
 
-wd <- ""
+wd <- "/Users/levisimons/Desktop/CIB"
 
 setwd(wd)
 
@@ -150,3 +150,60 @@ Project_Metadata <- as.data.frame(sample_data(physeq_retain))
 BetaDiversity_Export <- dplyr::left_join(samples_pca[,c("Sample.ID","Axis.1","Axis.2","Axis.3")],Project_Metadata[,c("Sample.ID","Latitude","Longitude","Sample.Date","projectid","Substrate")])
 #Export beta diversity table
 write.table(BetaDiversity_Export,paste(Primer,"_AllTaxa_BetaDiversity.csv",sep=""), row.names=FALSE, sep=",",quote = FALSE)
+
+#Determine which unique taxonomic groups have sufficient data for beta diversity modeling.
+#The number of samples per taxonomic group has a minimum threshold of 30.
+#The number of unique taxa within a taxonomic group has a minimum threshold of 4.
+taxa_table <- as.data.frame(tax_table(physeq_retain))
+taxa_table[taxa_table=="NA"] = NA
+sample_table <- as.data.frame(otu_table(physeq_retain))
+Sample_Names <- colnames(sample_table)
+sample_table[sample_table>0] <- 1
+sample_table$Taxon <- rownames(sample_table)
+sample_table <- separate(data = sample_table, col = "Taxon", sep=";",into = TaxonomicRanks)
+sample_table[ sample_table=="NA"] = NA
+frequency_table <- c()
+i=1
+for(TaxonomicRank in c("superkingdom","phylum","class","order","family","genus")){
+  tmp <- as.data.frame(table(taxa_table[,TaxonomicRank]))
+  tmp <- tmp[complete.cases(tmp),]
+  colnames(tmp) <- c("Taxon","Unique_Organisms_Within_Group")
+  tmp$taxonRank <- TaxonomicRank
+  sample_tmp <- sample_table[,c(TaxonomicRank,Sample_Names)]
+  sample_tmp <- sample_tmp[complete.cases(sample_tmp),]
+  names(sample_tmp)[names(sample_tmp) == TaxonomicRank] <- "Taxon"
+  sample_tmp <- aggregate(.~Taxon,sample_tmp,sum)
+  sample_tmp <- sample_tmp %>% dplyr::mutate_if(is.numeric, funs(sign(.)))
+  sample_tmp$Number_Samples <- rowSums(sample_tmp[,Sample_Names])
+  sample_tmp <- sample_tmp[,c("Taxon","Number_Samples")]
+  tmp <- dplyr::left_join(tmp,sample_tmp)
+  frequency_table[[i]] <- tmp
+  i=i+1
+}
+frequency_table <- rbindlist(frequency_table,fill=T)
+frequency_table <- frequency_table[frequency_table$Unique_Organisms_Within_Group>=4 & frequency_table$Number_Samples>=30,]
+write.table(frequency_table,paste(Primer,"_BetaDiversityThreshold.csv",sep=","), row.names=FALSE, sep=",",quote = FALSE)
+
+#Generate beta diversity export for selected taxonomic group.
+selected_taxon <- c("Lecanoromycetes")
+selected_rank <- "class"
+taxa_group_selected <- taxa_names(physeq_total)[tax_table(physeq_total)[, selected_rank] %in% selected_taxon]
+physeq_group <- prune_taxa(taxa_group_selected, physeq_total)
+#Remove empty samples for beta diversity calculations
+physeq_group <- prune_samples(sample_sums(physeq_group) > 0, physeq_group)
+#Remove samples without location and date data.
+physeq_group <- subset_samples(physeq_group, !is.na(Latitude))
+physeq_group <- subset_samples(physeq_group, !is.na(Longitude))
+physeq_group <- subset_samples(physeq_group, !is.na(Sample.Date))
+
+#Calculate beta diversity for total phyloseq data.
+pcoa_jaccard = ordinate(physeq_group, "PCoA", "chao") 
+samples_pca <- as.data.frame(pcoa_jaccard[["vectors"]])
+samples_pca$Sample.ID <- rownames(samples_pca)
+
+#Merge beta diversity principal components with sample metadata for modeling of beta diversity across a landscape.
+Project_Metadata <- as.data.frame(sample_data(physeq_group))
+BetaDiversity_Export <- dplyr::left_join(samples_pca[,c("Sample.ID","Axis.1","Axis.2","Axis.3")],Project_Metadata[,c("Sample.ID","Latitude","Longitude","Sample.Date","projectid","Substrate")])
+#Export beta diversity table
+#Used as input in running random forest models in ArcGIS Pro
+write.table(BetaDiversity_Export,paste(Primer,"_",selected_taxon,"_",selected_rank,"_BetaDiversity.csv",sep=""), row.names=FALSE, sep=",",quote = FALSE)
